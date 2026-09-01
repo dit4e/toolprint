@@ -1,0 +1,85 @@
+name: toolprint
+description: >-
+  Check an agent's MCP tool surface for context cost, capability risk and
+  definition drift, and report findings as SARIF.
+author: Keith Foster
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  mode:
+    description: >-
+      "scan" reports the current surface. "check" additionally compares it
+      against an approved baseline and fails on drift.
+    required: false
+    default: scan
+  baseline:
+    description: Path to the approved baseline, used when mode is "check".
+    required: false
+    default: .toolprint-baseline.json
+  fail-on:
+    description: Severity at or above which the job fails (info|low|medium|high|critical|none).
+    required: false
+    default: high
+  connect:
+    description: >-
+      Retrieve live tool definitions. This starts stdio servers the same way an
+      MCP client would. Leave false to analyse configuration only, which needs
+      no network and no subprocesses.
+    required: false
+    default: "false"
+  sarif-file:
+    description: Where to write the SARIF report.
+    required: false
+    default: toolprint.sarif
+  version:
+    description: Version of toolprint to install.
+    required: false
+    default: ""
+
+outputs:
+  sarif-file:
+    description: Path to the SARIF report, for github/codeql-action/upload-sarif.
+    value: ${{ steps.run.outputs.sarif-file }}
+  exit-code:
+    description: 0 clean, 1 at or above the threshold, 2 error, 3 baseline missing.
+    value: ${{ steps.run.outputs.exit-code }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install toolprint
+      shell: bash
+      run: |
+        if [ -n "${{ inputs.version }}" ]; then
+          python -m pip install --quiet "toolprint[tokens]==${{ inputs.version }}"
+        else
+          python -m pip install --quiet "toolprint[tokens]"
+        fi
+
+    - name: Run toolprint
+      id: run
+      shell: bash
+      run: |
+        set +e
+        ARGS=(--format sarif --out "${{ inputs.sarif-file }}" --fail-on "${{ inputs.fail-on }}" --yes)
+        if [ "${{ inputs.connect }}" = "true" ]; then ARGS+=(--connect); fi
+        if [ "${{ inputs.mode }}" = "check" ]; then
+          toolprint check --baseline "${{ inputs.baseline }}" "${ARGS[@]}"
+        else
+          toolprint scan --project "$GITHUB_WORKSPACE" "${ARGS[@]}"
+        fi
+        CODE=$?
+        set -e
+        echo "sarif-file=${{ inputs.sarif-file }}" >> "$GITHUB_OUTPUT"
+        echo "exit-code=$CODE" >> "$GITHUB_OUTPUT"
+        # Do not fail here: the workflow should upload the SARIF first, then
+        # decide. A job that dies before upload produces no annotations, which
+        # is the whole reason for emitting SARIF.
+        exit 0

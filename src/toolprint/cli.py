@@ -14,13 +14,16 @@ import json
 import sys
 from pathlib import Path
 
-from . import TOOL_NAME, __version__, bundle, connect, context, demo, discover, registry
+from . import (TOOL_NAME, __version__, baseline as baseline_mod, bundle, connect,
+               context, demo, discover, drift, registry)
+from . import effects
 from .findings import engine, library
-from .render import findings_json, html as html_render, jsonout, text
+from .render import findings_json, html as html_render, jsonout, sarif, text
 
 EXIT_OK = 0
 EXIT_FINDINGS = 1  # reserved for --fail-on in M2
 EXIT_ERROR = 2
+EXIT_NO_BASELINE = 3  # baseline missing or schema mismatch
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -53,7 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
                       help="per-request timeout when connecting (default 15)")
     scan.add_argument("--yes", action="store_true",
                       help="skip the confirmation prompt before contacting servers")
-    scan.add_argument("--format", choices=["text", "json"], default="text")
+    scan.add_argument("--format", choices=["text", "json", "sarif"], default="text")
     scan.add_argument("--findings", metavar="PATH",
                       help="write findings.json (the contract every renderer consumes)")
     scan.add_argument("--bundle", metavar="PATH",
@@ -72,6 +75,41 @@ def build_parser() -> argparse.ArgumentParser:
                       help="price per million input tokens, to estimate cost per "
                            "conversation; omitted rather than guessed by default")
     scan.add_argument("--out", metavar="PATH", help="write output to a file instead of stdout")
+
+    for name, help_text in [
+        ("baseline", "record the current tool surface as approved"),
+        ("check", "compare the current tool surface against the baseline (CI mode)"),
+        ("approve", "accept current state into the baseline"),
+    ]:
+        cmd = sub.add_parser(name, help=help_text)
+        cmd.add_argument("--baseline", default=baseline_mod.DEFAULT_PATH, metavar="PATH")
+        cmd.add_argument("--project", action="append", default=[], metavar="PATH")
+        cmd.add_argument("--client", action="append", default=[], metavar="NAME",
+                         choices=registry.CLIENT_IDS)
+        cmd.add_argument("--timeout", type=float, default=15.0, metavar="SECONDS")
+        cmd.add_argument("--yes", action="store_true",
+                         help="skip the confirmation prompt before contacting servers")
+        if name == "baseline":
+            cmd.add_argument("--force", action="store_true",
+                             help="write a baseline even though the current state looks "
+                                  "suspicious (see the objections it prints first)")
+            cmd.add_argument("--by", metavar="WHO", help="who approved this baseline")
+            cmd.add_argument("--note", metavar="TEXT", help="why")
+        if name == "check":
+            cmd.add_argument("--format", choices=["text", "json", "sarif"], default="text")
+            cmd.add_argument("--fail-on", choices=library.SEVERITIES + ["none"],
+                             default="high", metavar="LEVEL")
+            cmd.add_argument("--out", metavar="PATH")
+            cmd.add_argument("--findings", metavar="PATH",
+                             help="write findings.json with the drift block populated")
+            cmd.add_argument("--html", metavar="PATH",
+                             help="write a self-contained HTML report including drift")
+        if name == "approve":
+            cmd.add_argument("--tool", action="append", default=[], metavar="ID",
+                             help="approve only this server or server/tool (repeatable); "
+                                  "default approves everything currently drifting")
+            cmd.add_argument("--by", metavar="WHO")
+            cmd.add_argument("--note", metavar="TEXT")
 
     sub.add_parser("clients", help="list the client config locations this build knows about")
 
@@ -160,7 +198,9 @@ def cmd_scan(args: argparse.Namespace) -> int:
             Path(args.html).write_text(html_render.embed(document), encoding="utf-8")
             sys.stderr.write("wrote {}\n".format(args.html))
 
-    if args.format == "json":
+    if args.format == "sarif":
+        output = json.dumps(sarif.build(report, inventory), indent=2) + "\n"
+    elif args.format == "json":
         output = json.dumps(jsonout.inventory_dict(inventory, contexts), indent=2) + "\n"
     else:
         output = text.render(inventory, contexts, args.window, TOOL_NAME, report) + "\n"
@@ -177,6 +217,265 @@ def cmd_scan(args: argparse.Namespace) -> int:
             sys.stderr.write("{} finding(s) at or above {}\n".format(len(triggered), args.fail_on))
             return EXIT_FINDINGS
     return EXIT_OK
+
+
+def _collect_live(args: argparse.Namespace):
+    """Discover, resolve contexts, and retrieve live tool definitions.
+
+    baseline, check and approve all need the live surface: hashing a config file
+    says nothing about what a server actually advertises.
+    """
+    inventory = discover.collect(
+        clients=getattr(args, "client", None) or None,
+        project_patterns=getattr(args, "project", None) or None,
+    )
+    contexts = context.resolve_all(inventory)
+    plan = connect.plan(contexts)
+    sys.stderr.write(plan.describe() + "\n\n")
+    if plan.targets and not args.yes and sys.stdin.isatty():
+        try:
+            if input("Proceed? [y/N] ").strip().lower() not in ("y", "yes"):
+                sys.stderr.write("Declined.\n")
+                return inventory, contexts, False
+        except EOFError:
+            return inventory, contexts, False
+    if plan.targets:
+        connect.execute(plan, contexts, timeout=args.timeout)
+    return inventory, contexts, True
+
+
+def _live_tools(inventory) -> dict:
+    """Tool definitions, keyed the way the baseline keys servers."""
+    out: dict = {}
+    for server in inventory.servers:
+        if server.fetch_status == "ok" and server.tools:
+            identity = baseline_mod.server_identity(server)
+            out.setdefault(identity, {}).update(
+                {t["name"]: t for t in server.tools if isinstance(t.get("name"), str)})
+    return out
+
+
+def cmd_baseline(args: argparse.Namespace) -> int:
+    inventory, _, proceeded = _collect_live(args)
+    if not proceeded:
+        return EXIT_OK
+
+    # Trust on first use blesses whatever is there, so refuse to bless a state
+    # that already looks tampered with: recording an attack as approved would
+    # guarantee it is never reported again.
+    objections = baseline_mod.first_baseline_objections(inventory)
+    if objections and not args.force:
+        sys.stderr.write(
+            "Refusing to write a baseline: the current state already looks suspicious.\n"
+            "This detects change, not initial badness, so approving now would record\n"
+            "the following as normal and never report it again:\n\n")
+        for line in objections[:20]:
+            sys.stderr.write("  " + line + "\n")
+        if len(objections) > 20:
+            sys.stderr.write("  ... and {} more\n".format(len(objections) - 20))
+        sys.stderr.write("\nInvestigate, or re-run with --force if this is expected.\n")
+        return EXIT_FINDINGS
+
+    document = baseline_mod.build(inventory, args.by, args.note)
+    if objections:
+        document["forced"] = True
+        document["objections_at_creation"] = objections
+    baseline_mod.save(args.baseline, document)
+    servers = document["servers"]
+    sys.stderr.write("wrote {}: {} server(s), {} tool(s){}\n".format(
+        args.baseline, len(servers),
+        sum(len(v["tools"]) for v in servers.values()),
+        " (forced over {} objection(s))".format(len(objections)) if objections else ""))
+    return EXIT_OK
+
+
+def cmd_check(args: argparse.Namespace) -> int:
+    document, error = baseline_mod.load(args.baseline)
+    if document is None:
+        sys.stderr.write("{}\nRun `{} baseline` first.\n".format(error, TOOL_NAME))
+        return EXIT_NO_BASELINE
+
+    if document.get("heuristics_version") != effects.HEURISTICS_VERSION:
+        # Bumping the verb lists reclassifies tools, which would otherwise be
+        # indistinguishable from real drift. Treat it as a re-approval event.
+        sys.stderr.write(
+            "Baseline was written with heuristics version {}; this build uses {}.\n"
+            "Effect classifications may differ for reasons unrelated to the servers.\n"
+            "Review and re-run `{} baseline`.\n".format(
+                document.get("heuristics_version"), effects.HEURISTICS_VERSION, TOOL_NAME))
+        return EXIT_NO_BASELINE
+
+    inventory, contexts, proceeded = _collect_live(args)
+    if not proceeded:
+        return EXIT_OK
+
+    active, expired = baseline_mod.active_exceptions(document)
+    changes = drift.compare(document, baseline_mod.snapshot(inventory),
+                            _live_tools(inventory), active)
+    report = engine.analyse(inventory, contexts)
+
+    if args.findings or args.html:
+        generated_at = datetime.datetime.now(datetime.timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+        document = findings_json.build(inventory, report, generated_at, changes)
+        if args.findings:
+            Path(args.findings).write_text(
+                json.dumps(document, indent=2) + "\n", encoding="utf-8")
+            sys.stderr.write("wrote {}\n".format(args.findings))
+        if args.html:
+            Path(args.html).write_text(html_render.embed(document), encoding="utf-8")
+            sys.stderr.write("wrote {}\n".format(args.html))
+
+    if args.format == "sarif":
+        output = json.dumps(sarif.build(report, inventory, changes), indent=2) + "\n"
+    elif args.format == "json":
+        output = json.dumps({
+            "baseline": args.baseline,
+            "changes": [_change_dict(c) for c in changes],
+            "expired_exceptions": expired,
+        }, indent=2) + "\n"
+    else:
+        output = _render_changes(changes, expired, args.baseline) + "\n"
+
+    if args.out:
+        Path(args.out).write_text(output, encoding="utf-8")
+        sys.stderr.write("wrote {}\n".format(args.out))
+    else:
+        sys.stdout.write(output)
+
+    if args.fail_on != "none":
+        triggered = [c for c in changes
+                     if not c.excepted and library.at_or_above(c.severity, args.fail_on)]
+        if triggered:
+            sys.stderr.write("{} change(s) at or above {}\n".format(
+                len(triggered), args.fail_on))
+            return EXIT_FINDINGS
+    return EXIT_OK
+
+
+def cmd_approve(args: argparse.Namespace) -> int:
+    document, error = baseline_mod.load(args.baseline)
+    if document is None:
+        sys.stderr.write("{}\n".format(error))
+        return EXIT_NO_BASELINE
+
+    inventory, _, proceeded = _collect_live(args)
+    if not proceeded:
+        return EXIT_OK
+
+    current = baseline_mod.snapshot(inventory)
+    active, _ = baseline_mod.active_exceptions(document)
+    changes = drift.compare(document, current, _live_tools(inventory), active)
+    if not changes:
+        sys.stderr.write("Nothing to approve: no drift against {}.\n".format(args.baseline))
+        return EXIT_OK
+
+    selectors = args.tool or []
+    stamp = baseline_mod.now()
+    approved, skipped = [], []
+
+    for change in changes:
+        target = "{}/{}".format(change.server, change.tool) if change.tool else change.server
+        if selectors and not any(
+                sel in (target, change.server, change.tool) for sel in selectors):
+            skipped.append(target)
+            continue
+
+        # Approve at the granularity of the change. Replacing the whole server
+        # record would silently bless every other change on that server - so
+        # approving one benign rename would also approve a concurrent rug pull
+        # sitting beside it, with no indication that it had happened.
+        stored = document.setdefault("servers", {}).setdefault(change.server, {})
+        live = current.get(change.server) or {}
+
+        if change.tool is None:
+            for key in ("instructions_hash", "toolset_hash", "transport", "auth_method"):
+                if key in live:
+                    stored[key] = live[key]
+        else:
+            tools = stored.setdefault("tools", {})
+            if change.rule == "DRIFT-010":
+                tools.pop(change.tool, None)      # the tool is gone; forget it
+            else:
+                record = (live.get("tools") or {}).get(change.tool)
+                if record is None:
+                    skipped.append(target)
+                    continue
+                record = dict(record)
+                record["approved_at"] = stamp
+                record["approved_by"] = args.by
+                record["note"] = args.note
+                tools[change.tool] = record
+        approved.append(target)
+
+    # The toolset hash covers the whole set, so it is only accurate once every
+    # change on that server has been accepted.
+    for identity in {c.server for c in changes}:
+        outstanding = [c for c in changes
+                       if c.server == identity and
+                       ("{}/{}".format(c.server, c.tool) if c.tool else c.server) not in approved]
+        if not outstanding and identity in current:
+            document["servers"][identity]["toolset_hash"] = current[identity]["toolset_hash"]
+
+    document["approved_at"] = stamp
+    document["approved_by"] = args.by
+    baseline_mod.save(args.baseline, document)
+    sys.stderr.write("approved {} of {} change(s) into {}\n".format(
+        len(approved), len(changes), args.baseline))
+    if skipped:
+        sys.stderr.write("  {} change(s) left unapproved and still reported\n".format(
+            len(skipped)))
+    return EXIT_OK
+
+
+def _change_dict(change) -> dict:
+    return {
+        "rule": change.rule, "severity": change.severity, "title": change.title,
+        "server": change.server, "tool": change.tool, "detail": change.detail,
+        "evidence": change.evidence, "excepted": bool(change.excepted),
+        "exception_reason": (change.excepted or {}).get("reason"),
+    }
+
+
+def _render_changes(changes, expired, path: str) -> str:
+    lines = ["{} {} — drift against {}".format(TOOL_NAME, __version__, path), ""]
+    if not changes:
+        lines.append("  No drift. The tool surface matches the approved baseline.")
+        if expired:
+            lines.append("")
+        else:
+            return "\n".join(lines)
+    live = [c for c in changes if not c.excepted]
+    if changes:
+        tally: dict = {}
+        for change in live:
+            tally[change.severity] = tally.get(change.severity, 0) + 1
+        lines.append("  {} change(s): {}".format(
+            len(live), " · ".join("{} {}".format(n, s) for s, n in sorted(
+                tally.items(), key=lambda kv: -library.SEVERITY_ORDER[kv[0]])) or "none active"))
+        lines.append("")
+        for change in changes:
+            mark = "   (accepted exception)" if change.excepted else ""
+            lines.append("  [{}] {}  {}{}".format(
+                change.severity.upper(), change.rule, change.title, mark))
+            lines.append("      {}{}".format(
+                change.server, "/" + change.tool if change.tool else ""))
+            lines.append("      {}".format(change.detail))
+            if change.excepted:
+                lines.append("      reason: {} (expires {})".format(
+                    change.excepted.get("reason", "-"), change.excepted.get("expires", "-")))
+            else:
+                lines.append("      fix: {}".format(
+                    drift.REMEDIATION.get(change.rule, "").split(". ")[0] + "."))
+            lines.append("")
+    if expired:
+        lines.append("  {} exception(s) expired and no longer suppress anything:".format(
+            len(expired)))
+        for item in expired:
+            lines.append("    {} {} — expired {}".format(
+                item.get("rule"), item.get("server"), item.get("expires")))
+        lines.append("")
+    return "\n".join(lines)
 
 
 def cmd_clients(_: argparse.Namespace) -> int:
@@ -197,6 +496,12 @@ def main(argv=None) -> int:
     try:
         if args.command == "scan":
             return cmd_scan(args)
+        if args.command == "baseline":
+            return cmd_baseline(args)
+        if args.command == "check":
+            return cmd_check(args)
+        if args.command == "approve":
+            return cmd_approve(args)
         if args.command == "clients":
             return cmd_clients(args)
         if args.command == "kit":

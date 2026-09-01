@@ -58,13 +58,52 @@ no fonts, no analytics, and a Content-Security-Policy of `default-src 'none'`
 with `connect-src 'none'` — it has no capability to transmit what it displays.
 It opens from `file://` and prints cleanly to PDF.
 
+## Drift
+
+Once a baseline exists, `check` reports what changed without anyone reviewing it.
+
+```bash
+toolprint baseline --connect --by "$USER" --note "reviewed"
+toolprint check --connect --fail-on high
+toolprint approve --tool contact_delete --by "$USER" --note "expected in 4.2"
+```
+
+Ten rules, most severe first: effect-class escalation and revoked safety
+annotations are `critical`; a description that changed while its schema did not
+is `high`, because that is the rug-pull signature — an attacker rewriting a
+tool's instructions has to leave the schema alone or the tool stops working.
+Invisible characters and cross-server references appearing in text are `high`
+too. Breaking schema changes and new tools are `medium`; additive changes and
+removals are `low`.
+
+**Baselines refuse to bless a suspicious state.** Trust-on-first-use means a
+baseline approves whatever is in front of it, so `baseline` inspects the current
+surface for invisible characters, homoglyphs and cross-server shadowing first,
+and will not write a clean baseline over any of them without `--force`.
+
+**Exceptions require a reason and an expiry.** A suppression that cannot lapse
+becomes permanent by neglect, and then nobody reads the report at all. Expired
+exceptions stop suppressing and say so in the output.
+
+Hashes are per component — description, schema, annotations — rather than one
+blob, because only that split shows the description-moved-schema-didn't
+correlation. Canonicalisation normalises structure and never content:
+`transfer` and `transfеr` (Cyrillic е) hash differently on purpose, so a
+homoglyph substitution is caught rather than normalised away.
+
 ## CI
 
 ```bash
 toolprint scan --format json --fail-on high
+toolprint check --format sarif --out toolprint.sarif
 ```
 
-Exit `0` below the threshold, `1` at or above it, `2` on execution error.
+Exit `0` below the threshold, `1` at or above it, `2` on execution error, `3`
+when the baseline is missing or was written by a different heuristics version.
+
+SARIF drops into GitHub code scanning, so findings land as annotations on the
+pull request. There is a ready-made action — see
+[docs/github-action.md](docs/github-action.md).
 
 ## Assessment bundles
 
@@ -103,9 +142,10 @@ chars/token, ~4% median error), and the method used is recorded per server.
 
 ## Status
 
-Early. `scan`, `report`, bundles and the HTML viewer are built and dogfooded.
-Baselines, drift detection and SARIF are next; `findings.json` already carries
-the `drift` and `benchmark` fields they will populate.
+Early, but complete through drift. `scan`, `check`, baselines, approvals,
+bundles, the HTML viewer and SARIF are built and dogfooded. Opt-in peer
+benchmarking is next; `findings.json` already carries the `benchmark` field it
+will populate.
 
 ## Licence
 

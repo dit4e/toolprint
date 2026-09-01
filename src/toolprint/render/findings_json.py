@@ -112,6 +112,7 @@ def build(
     inventory: Inventory,
     report: Report,
     generated_at: str,
+    changes: Optional[Sequence[Any]] = None,
 ) -> Dict[str, Any]:
     return OrderedDict([
         ("schema_version", SCHEMA_VERSION),
@@ -134,6 +135,13 @@ def build(
             ])
             for e in inventory.errors
         ]),
-        ("drift", None),      # M5
+        ("drift", [
+            OrderedDict([
+                ("rule", c.rule), ("severity", c.severity), ("title", c.title),
+                ("server", c.server), ("tool", c.tool), ("detail", c.detail),
+                ("evidence", c.evidence), ("excepted", bool(c.excepted)),
+            ])
+            for c in (changes or [])
+        ] if changes is not None else None),
         ("benchmark", None),  # M6
     ])
