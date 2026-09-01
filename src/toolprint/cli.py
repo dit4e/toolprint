@@ -83,12 +83,22 @@ def build_parser() -> argparse.ArgumentParser:
     ]:
         cmd = sub.add_parser(name, help=help_text)
         cmd.add_argument("--baseline", default=baseline_mod.DEFAULT_PATH, metavar="PATH")
+        cmd.add_argument("--config", action="append", default=[], metavar="PATH",
+                         help="explicit config file (repeatable); disables auto-discovery. "
+                              "Use this to watch a list of servers you do not have installed.")
         cmd.add_argument("--project", action="append", default=[], metavar="PATH")
         cmd.add_argument("--client", action="append", default=[], metavar="NAME",
                          choices=registry.CLIENT_IDS)
         cmd.add_argument("--timeout", type=float, default=15.0, metavar="SECONDS")
         cmd.add_argument("--yes", action="store_true",
                          help="skip the confirmation prompt before contacting servers")
+        # Accepted and ignored. These commands cannot work without live tool
+        # definitions, so they always connect - but --connect is the obvious
+        # thing to type, and rejecting it turns a correct mental model into a
+        # usage error.
+        cmd.add_argument("--connect", action="store_true",
+                         help="accepted for symmetry with `scan`; these commands "
+                              "always retrieve live tool definitions")
         if name == "baseline":
             cmd.add_argument("--force", action="store_true",
                              help="write a baseline even though the current state looks "
@@ -227,6 +237,7 @@ def _collect_live(args: argparse.Namespace):
     """
     inventory = discover.collect(
         clients=getattr(args, "client", None) or None,
+        explicit_configs=getattr(args, "config", None) or None,
         project_patterns=getattr(args, "project", None) or None,
     )
     contexts = context.resolve_all(inventory)

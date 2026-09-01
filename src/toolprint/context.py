@@ -65,11 +65,20 @@ class Context:
         return "{}::{}".format(self.client, self.project or "-")
 
 
-def _client_by_id(client_id: str) -> Optional[registry.Client]:
+def _client_by_id(client_id: str) -> registry.Client:
+    """Look up a client, synthesising one for sources outside the registry.
+
+    Servers read from an explicit --config file carry a client id that is not in
+    the registry. Returning None for those dropped them from every context, so
+    they were never resolved and never contacted - which silently broke
+    --connect for any explicit config, not just the unusual ones. An unknown
+    source has a single scope, so it needs no precedence table; every entry
+    wins.
+    """
     for client in registry.CLIENTS:
         if client.id == client_id:
             return client
-    return None
+    return registry.Client(id=client_id, name=client_id)
 
 
 def _resolve(client: registry.Client, entries: Sequence[Server]) -> Context:
@@ -97,8 +106,6 @@ def resolve_all(inventory: Inventory) -> List[Context]:
 
     for client_id in sorted(by_client):
         client = _client_by_id(client_id)
-        if client is None:
-            continue
         entries = by_client[client_id]
         user_entries = [e for e in entries if e.project_root is None]
         projects = sorted({e.project_root for e in entries if e.project_root})

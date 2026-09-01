@@ -148,15 +148,22 @@ def inspect_tool(tool: Dict[str, Any]) -> List[Dict[str, Any]]:
 def is_distinctive(name: str) -> bool:
     """Is this tool name specific enough that seeing it in prose means something?
 
-    Length alone is not enough: "search", "delete" and "create" are all six
-    characters and all appear in ordinary descriptions, so a length threshold
-    generates a shadowing finding every time one server's description happens to
-    use another server's verb. A name is treated as distinctive when it is
-    structured - a separator or a camelCase boundary, as in `contact_delete` or
-    `createIssue` - or long enough that a collision with prose is implausible.
+    Structure only: a separator or a camelCase boundary, as in `contact_delete`,
+    `issues.create` or `createIssue`. A bare single word is never distinctive,
+    however long.
+
+    Length was tried as a second clause and had to be removed. At six characters
+    it matched `search`, `delete` and `create`; raised to twelve it still matched
+    `documentation`, which is an Azure tool name and also a word that appears in
+    seven other servers' descriptions - every one of them a false shadowing
+    report, and every one of them blocking a baseline from being written.
+    `configuration` and `authentication` would do the same.
+
+    The trade is deliberate. Missing a reference to an unusual single-word tool
+    name costs one detection path, and the mutation rules still cover the tool.
+    A false positive here refuses to write a baseline, which is how a security
+    tool teaches people to pass --force by reflex.
     """
-    if len(name) >= 12:
-        return True
     if any(sep in name for sep in ("_", ".", "-", "/", ":")):
         return True
     return bool(re.search(r"[a-z0-9][A-Z]", name))

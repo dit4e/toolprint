@@ -7,6 +7,7 @@ and the shadowing they imply.
 
 from __future__ import annotations
 
+import json
 import shutil
 import tempfile
 import unittest
@@ -133,3 +134,34 @@ class TestConnectPlan(ContextCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestExplicitConfigSources(unittest.TestCase):
+    """Servers from --config are not from a registered client.
+
+    Dropping them from context resolution silently broke --connect for every
+    explicit config: they were discovered, listed, and never contacted.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.path = self.tmp / "watchlist.json"
+        self.path.write_text(json.dumps({"mcpServers": {
+            "alpha": {"command": "npx", "args": ["-y", "a"]},
+            "beta": {"type": "http", "url": "https://b.example/mcp"},
+        }}), encoding="utf-8")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_explicit_servers_reach_a_context(self):
+        inv = discover.collect(explicit_configs=[str(self.path)])
+        contexts = context.resolve_all(inv)
+        self.assertTrue(contexts)
+        names = {s.name for c in contexts for s in c.servers}
+        self.assertEqual(names, {"alpha", "beta"})
+
+    def test_explicit_servers_are_planned_for_contact(self):
+        inv = discover.collect(explicit_configs=[str(self.path)])
+        plan = connect.plan(context.resolve_all(inv))
+        self.assertEqual({s.name for s in plan.targets}, {"alpha", "beta"})

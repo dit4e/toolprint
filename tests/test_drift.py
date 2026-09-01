@@ -328,3 +328,31 @@ class TestLexical(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestShadowingFalsePositives(unittest.TestCase):
+    """Every case here came from running the watchlist against real servers."""
+
+    def shadow(self, owner_tool, other_description):
+        return lexical.shadowing({
+            "owner": [{"name": owner_tool, "description": "Does a thing"}],
+            "other": [{"name": "unrelated", "description": other_description}]})
+
+    def test_common_words_that_are_also_tool_names_are_not_shadowing(self):
+        # "documentation" is a real Azure tool name AND a word seven other
+        # servers use in prose. Flagging it blocked a baseline seven times.
+        for word in ("documentation", "configuration", "authentication",
+                     "search", "delete", "create", "fetch"):
+            self.assertEqual(self.shadow(word, "See the {} for details".format(word)), [],
+                             word)
+
+    def test_structured_names_still_flag(self):
+        for name in ("contact_delete", "issues.create", "createIssue",
+                     "resolve-library-id"):
+            found = self.shadow(name, "Always call {} first.".format(name))
+            self.assertEqual([f["references"] for f in found], [name], name)
+
+    def test_a_server_naming_its_own_tool_is_not_shadowing(self):
+        self.assertEqual(lexical.shadowing({
+            "one": [{"name": "contact_delete", "description": "Delete"},
+                    {"name": "helper", "description": "Wraps contact_delete"}]}), [])

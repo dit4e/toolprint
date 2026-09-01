@@ -1,0 +1,103 @@
+name: watch
+
+# The longitudinal collector. Every run compares a fixed list of public MCP
+# servers against an approved baseline and records what changed.
+#
+# The git history of watchlist/baseline.json IS the dataset: every commit that
+# touches it is a definition change, with a timestamp and a diff. No storage to
+# build, and the record is publishable evidence rather than a private database.
+#
+# watchlist/observations.csv carries the denominator - how many server-days
+# produced no drift - because a drift rate needs both halves.
+
+on:
+  schedule:
+    - cron: "17 6 * * *"   # daily, off the hour to avoid the thundering herd
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: watch
+  cancel-in-progress: false
+
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Install toolprint from source
+        run: pip install --quiet -e ".[tokens]"
+
+      - name: Observe
+        id: observe
+        run: |
+          set +e
+          mkdir -p watchlist/observations
+          DATE=$(date -u +%Y-%m-%d)
+          if [ ! -f watchlist/baseline.json ]; then
+            toolprint baseline --yes --connect --timeout 60 \
+              --config watchlist/servers.json --baseline watchlist/baseline.json \
+              --by "watch workflow" --note "first observation"
+            echo "first=true" >> "$GITHUB_OUTPUT"
+            echo "drift=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          toolprint check --yes --connect --timeout 60 --fail-on none \
+            --config watchlist/servers.json --baseline watchlist/baseline.json \
+            --format json --out "watchlist/observations/$DATE.json"
+          DRIFT=$(python -c "import json;print(len(json.load(open('watchlist/observations/$DATE.json'))['changes']))")
+          echo "drift=$DRIFT" >> "$GITHUB_OUTPUT"
+          echo "date=$DATE" >> "$GITHUB_OUTPUT"
+          # Accept the new state so tomorrow compares against today, not against
+          # a baseline that keeps re-reporting the same change forever.
+          if [ "$DRIFT" != "0" ]; then
+            toolprint approve --yes --connect --timeout 60 \
+              --config watchlist/servers.json --baseline watchlist/baseline.json \
+              --by "watch workflow" --note "observed $DATE"
+          fi
+          exit 0
+
+      - name: Record the denominator
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          FILE=watchlist/observations.csv
+          if [ ! -f "$FILE" ]; then
+            echo "date,servers,tools,reachable,drift_changes" > "$FILE"
+          fi
+          python - "$DATE" "${{ steps.observe.outputs.drift }}" <<'PY'
+          import csv, json, sys
+          date, drift = sys.argv[1], sys.argv[2]
+          base = json.load(open("watchlist/baseline.json"))
+          servers = base.get("servers", {})
+          tools = sum(len(v.get("tools", {})) for v in servers.values())
+          with open("watchlist/observations.csv", "a", newline="") as fh:
+              csv.writer(fh).writerow([date, len(servers), tools, len(servers), drift])
+          PY
+
+      - name: Commit
+        run: |
+          git config user.name "toolprint watch"
+          git config user.email "noreply@github.com"
+          git add watchlist/
+          if git diff --cached --quiet; then
+            echo "nothing to record"
+            exit 0
+          fi
+          DRIFT="${{ steps.observe.outputs.drift }}"
+          if [ "$DRIFT" = "0" ]; then
+            git commit -m "watch: no drift ($(date -u +%Y-%m-%d))"
+          else
+            git commit -m "watch: $DRIFT change(s) observed ($(date -u +%Y-%m-%d))"
+          fi
+          git push
