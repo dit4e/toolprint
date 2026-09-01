@@ -13,9 +13,9 @@ import json
 import sys
 from pathlib import Path
 
-from . import TOOL_NAME, __version__, connect, context, discover, registry
+from . import TOOL_NAME, __version__, connect, context, demo, discover, registry
 from .findings import engine, library
-from .render import findings_json, jsonout, text
+from .render import findings_json, html as html_render, jsonout, text
 
 EXIT_OK = 0
 EXIT_FINDINGS = 1  # reserved for --fail-on in M2
@@ -55,6 +55,9 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--format", choices=["text", "json"], default="text")
     scan.add_argument("--findings", metavar="PATH",
                       help="write findings.json (the contract every renderer consumes)")
+    scan.add_argument("--html", metavar="PATH",
+                      help="write a self-contained HTML report; opens offline, makes no "
+                           "network requests, prints cleanly to PDF")
     scan.add_argument("--fail-on", choices=library.SEVERITIES + ["none"], default="high",
                       metavar="LEVEL",
                       help="exit 1 when a finding at or above LEVEL is present "
@@ -65,6 +68,14 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--out", metavar="PATH", help="write output to a file instead of stdout")
 
     sub.add_parser("clients", help="list the client config locations this build knows about")
+
+    viewer = sub.add_parser(
+        "viewer", help="write the empty HTML viewer; drop a findings.json onto it")
+    viewer.add_argument("out", metavar="PATH")
+
+    demo_cmd = sub.add_parser(
+        "demo", help="write a demo report with synthetic findings, to show the output")
+    demo_cmd.add_argument("out", metavar="PATH")
     return parser
 
 
@@ -102,12 +113,17 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
     report = engine.analyse(inventory, contexts, args.window, args.price_per_mtok)
 
-    if args.findings:
+    if args.findings or args.html:
         generated_at = datetime.datetime.now(datetime.timezone.utc).strftime(
             "%Y-%m-%dT%H:%M:%SZ")
         document = findings_json.build(inventory, report, generated_at)
-        Path(args.findings).write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
-        sys.stderr.write("wrote {}\n".format(args.findings))
+        if args.findings:
+            Path(args.findings).write_text(
+                json.dumps(document, indent=2) + "\n", encoding="utf-8")
+            sys.stderr.write("wrote {}\n".format(args.findings))
+        if args.html:
+            Path(args.html).write_text(html_render.embed(document), encoding="utf-8")
+            sys.stderr.write("wrote {}\n".format(args.html))
 
     if args.format == "json":
         output = json.dumps(jsonout.inventory_dict(inventory, contexts), indent=2) + "\n"
@@ -148,6 +164,15 @@ def main(argv=None) -> int:
             return cmd_scan(args)
         if args.command == "clients":
             return cmd_clients(args)
+        if args.command == "demo":
+            Path(args.out).write_text(
+                html_render.embed(demo.document()), encoding="utf-8")
+            sys.stderr.write("wrote {} (synthetic data)\n".format(args.out))
+            return EXIT_OK
+        if args.command == "viewer":
+            Path(args.out).write_text(html_render.read_template(), encoding="utf-8")
+            sys.stderr.write("wrote {}\n".format(args.out))
+            return EXIT_OK
     except KeyboardInterrupt:
         return EXIT_ERROR
     return EXIT_ERROR

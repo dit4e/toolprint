@@ -1,0 +1,627 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--
+  Content-Security-Policy, deliberately readable.
+
+  default-src 'none' blocks everything, then only inline style and script are
+  permitted. connect-src 'none' means fetch, XHR and WebSocket cannot be used at
+  all, so this file physically cannot transmit the report it is displaying. That
+  is the whole basis on which someone opens it on a report containing their tool
+  names and schemas. Verify it by reading this tag; verify it again by opening
+  devtools and confirming the network panel stays empty.
+-->
+<meta http-equiv="Content-Security-Policy" content="
+  default-src 'none';
+  script-src 'unsafe-inline';
+  style-src 'unsafe-inline';
+  img-src data:;
+  font-src 'none';
+  connect-src 'none';
+  form-action 'none';
+  base-uri 'none';
+  frame-ancestors 'none';
+">
+<title>MCP Assessment Report</title>
+<style>
+:root {
+  --bg: #ffffff; --fg: #16181d; --muted: #5c6370; --line: #e3e6ea;
+  --panel: #f7f8fa; --accent: #1f4fd8;
+  --critical: #8b1a1a; --high: #b4460f; --medium: #8a6100; --low: #40566d; --info: #5c6370;
+  --critical-bg: #fdecec; --high-bg: #fdf0e7; --medium-bg: #fbf4e3;
+  --low-bg: #eef2f6; --info-bg: #f2f3f5;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161a; --fg: #e8eaed; --muted: #9aa3ad; --line: #2a2e35;
+    --panel: #1b1e23; --accent: #7aa2ff;
+    --critical: #ff8f8f; --high: #ffb27a; --medium: #ecc76a; --low: #9fb6cc; --info: #9aa3ad;
+    --critical-bg: #2c1a1a; --high-bg: #2b2018; --medium-bg: #292518;
+    --low-bg: #1d232a; --info-bg: #1e2126;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--sans);
+  font-size: 15px; line-height: 1.55; -webkit-text-size-adjust: 100%;
+}
+.wrap { max-width: 60rem; margin: 0 auto; padding: 2.5rem 1.5rem 5rem; }
+h1 { font-size: 1.6rem; margin: 0 0 .25rem; letter-spacing: -.01em; }
+h2 {
+  font-size: .78rem; text-transform: uppercase; letter-spacing: .09em;
+  color: var(--muted); margin: 2.75rem 0 .85rem; font-weight: 600;
+}
+h3 { font-size: 1rem; margin: 1.5rem 0 .4rem; }
+p { margin: 0 0 .7rem; }
+a { color: var(--accent); }
+.sub { color: var(--muted); font-size: .85rem; margin-bottom: 2rem; }
+.sub code { font-family: var(--mono); font-size: .95em; }
+
+/* Headline */
+.headline { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); }
+.stat { padding: 1.15rem 1.25rem; border-right: 1px solid var(--line); }
+.stat:last-child { border-right: 0; }
+.stat .n { font-size: 1.85rem; font-weight: 650; letter-spacing: -.02em; line-height: 1.15; }
+.stat .k { font-size: .74rem; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+.stat .d { font-size: .82rem; color: var(--muted); margin-top: .2rem; }
+.lede {
+  padding: 1rem 1.25rem; background: var(--panel);
+  border-top: 1px solid var(--line); font-size: 1.02rem;
+}
+.lede strong { font-weight: 650; }
+
+/* Severity */
+.sev {
+  display: inline-block; font-size: .68rem; font-weight: 700; letter-spacing: .07em;
+  text-transform: uppercase; padding: .12rem .45rem; border-radius: 3px;
+  font-family: var(--mono); white-space: nowrap;
+}
+.sev-critical { color: var(--critical); background: var(--critical-bg); }
+.sev-high     { color: var(--high);     background: var(--high-bg); }
+.sev-medium   { color: var(--medium);   background: var(--medium-bg); }
+.sev-low      { color: var(--low);      background: var(--low-bg); }
+.sev-info     { color: var(--info);     background: var(--info-bg); }
+
+/* Findings */
+.finding {
+  border: 1px solid var(--line); border-left-width: 3px; border-radius: 7px;
+  padding: .9rem 1.1rem; margin-bottom: .75rem; break-inside: avoid;
+}
+.finding.critical { border-left-color: var(--critical); }
+.finding.high     { border-left-color: var(--high); }
+.finding.medium   { border-left-color: var(--medium); }
+.finding.low      { border-left-color: var(--low); }
+.finding.info     { border-left-color: var(--info); }
+.finding .head { display: flex; gap: .6rem; align-items: baseline; flex-wrap: wrap; }
+.finding .id { font-family: var(--mono); font-size: .78rem; color: var(--muted); }
+.finding .title { font-weight: 620; }
+.finding .detail { margin: .45rem 0 .5rem; }
+.finding .fix { font-size: .9rem; }
+.finding .fix b { font-weight: 620; }
+.narrative {
+  margin-top: .6rem; padding: .6rem .8rem; background: var(--panel);
+  border-radius: 5px; font-size: .93rem;
+}
+.affected {
+  margin: .4rem 0 .2rem; padding: 0; list-style: none;
+  font-family: var(--mono); font-size: .8rem; color: var(--muted);
+}
+.affected li { padding: .04rem 0; }
+details.more > summary {
+  cursor: pointer; font-size: .8rem; color: var(--muted); margin-top: .2rem;
+}
+
+/* Tables */
+table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+th, td { text-align: left; padding: .4rem .6rem; border-bottom: 1px solid var(--line); }
+th { font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.mono { font-family: var(--mono); font-size: .85em; }
+.scroll { overflow-x: auto; }
+
+/* Bars */
+.bar { background: var(--panel); border-radius: 3px; height: .5rem; position: relative; min-width: 3rem; }
+.bar > i { display: block; height: 100%; background: var(--accent); border-radius: 3px; opacity: .75; }
+
+.tag {
+  font-family: var(--mono); font-size: .72rem; padding: .05rem .35rem;
+  border: 1px solid var(--line); border-radius: 3px; color: var(--muted);
+}
+.note { color: var(--muted); font-size: .87rem; }
+.empty { color: var(--muted); font-style: italic; }
+
+/* Dropzone (standalone use) */
+#dropzone {
+  border: 2px dashed var(--line); border-radius: 12px; padding: 3.5rem 2rem;
+  text-align: center; color: var(--muted); margin-top: 2rem;
+}
+#dropzone.over { border-color: var(--accent); color: var(--fg); }
+#dropzone h2 { margin-top: 0; }
+#pick { font: inherit; }
+
+@media (max-width: 640px) { .stats { grid-template-columns: 1fr; }
+  .stat { border-right: 0; border-bottom: 1px solid var(--line); } }
+
+@page { margin: 15mm; }
+@media print {
+  :root {
+    --bg: #fff; --fg: #000; --muted: #444; --line: #bbb; --panel: #f2f2f2;
+    --critical-bg: #fff; --high-bg: #fff; --medium-bg: #fff; --low-bg: #fff; --info-bg: #fff;
+  }
+  body { font-size: 10.5pt; }
+  .wrap { max-width: none; padding: 0; }
+  #dropzone, .noprint { display: none !important; }
+  h2 { break-after: avoid; margin-top: 1.4rem; }
+  .finding, tr, .headline { break-inside: avoid; }
+  details.more[open] > summary { list-style: none; }
+  details.more > summary { display: none; }
+  details.more > *:not(summary) { display: revert !important; }
+  a { text-decoration: none; color: inherit; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="dropzone" class="noprint">
+    <h2>MCP assessment report</h2>
+    <p>Drop a <code>findings.json</code> here to render it.</p>
+    <p><input type="file" id="pick" accept=".json,application/json"></p>
+    <p class="note">Nothing is uploaded. This file cannot make network requests &mdash;
+       see the Content-Security-Policy in its <code>&lt;head&gt;</code>.</p>
+  </div>
+  <main id="report" hidden></main>
+</div>
+
+<script type="application/json" id="findings-data">null</script>
+<script>
+"use strict";
+/*
+  Everything below runs on the viewer's machine and touches no network.
+
+  All text from the report is inserted with textContent, never innerHTML. That is
+  not incidental: tool names and descriptions in findings.json come from MCP
+  servers, which are exactly the untrusted party this tool exists to assess. A
+  report that executed markup from a server it was reporting on would be a fine
+  joke at our expense.
+*/
+var SEVERITIES = ["critical", "high", "medium", "low", "info"];
+var STATUS_LABEL = {
+  ok: "", auth_required: "auth required", unreachable: "unreachable",
+  error: "failed to start", unsupported: "unsupported transport",
+  not_mcp: "not an MCP endpoint", not_attempted: "not contacted"
+};
+
+function el(tag, cls, text) {
+  var node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text !== undefined && text !== null) node.textContent = String(text);
+  return node;
+}
+function num(value) {
+  return (typeof value === "number" && isFinite(value)) ? value.toLocaleString("en-US") : "-";
+}
+function section(parent, title) {
+  parent.appendChild(el("h2", null, title));
+  return parent;
+}
+function table(parent, headers, aligns) {
+  var scroll = el("div", "scroll");
+  var t = el("table"), thead = el("thead"), tr = el("tr");
+  headers.forEach(function (h, i) {
+    var th = el("th", aligns && aligns[i] === "num" ? "num" : null, h);
+    tr.appendChild(th);
+  });
+  thead.appendChild(tr); t.appendChild(thead);
+  var tbody = el("tbody"); t.appendChild(tbody);
+  scroll.appendChild(t); parent.appendChild(scroll);
+  return tbody;
+}
+function row(tbody, cells) {
+  var tr = el("tr");
+  cells.forEach(function (cell) {
+    var td = el("td", cell.cls || null);
+    if (cell.node) td.appendChild(cell.node);
+    else td.textContent = cell.text === undefined || cell.text === null ? "-" : String(cell.text);
+    tr.appendChild(td);
+  });
+  tbody.appendChild(tr);
+  return tr;
+}
+function bar(fraction) {
+  var outer = el("div", "bar"), inner = el("i");
+  inner.style.width = Math.max(0, Math.min(1, fraction || 0)) * 100 + "%";
+  outer.appendChild(inner);
+  return outer;
+}
+function plural(n, one, many) { return n === 1 ? one : (many || one + "s"); }
+function verb(n, singular, plural_) { return n === 1 ? singular : plural_; }
+
+function render(data) {
+  var root = document.getElementById("report");
+  root.hidden = false;
+  root.textContent = "";
+  document.getElementById("dropzone").hidden = true;
+
+  var summary = data.summary || {};
+  renderHeader(root, data, summary);
+  renderHeadline(root, summary, data);
+  renderInventory(root, data, summary);
+  renderCost(root, data, summary);
+  renderCapability(root, data, summary);
+  renderDrift(root, data);
+  renderFindings(root, data);
+  renderBenchmark(root, data);
+  renderMethodology(root, data, summary);
+}
+
+function renderHeader(root, data, summary) {
+  root.appendChild(el("h1", null, "MCP assessment report"));
+  var parts = [];
+  if (data.generated_at) parts.push(data.generated_at);
+  if (data.generator) parts.push(data.generator);
+  parts.push(summary.mode === "connect"
+    ? "live tool definitions retrieved"
+    : "configuration only, servers not contacted");
+  root.appendChild(el("p", "sub", parts.join("  ·  ")));
+}
+
+function renderHeadline(root, summary, data) {
+  var box = el("div", "headline"), stats = el("div", "stats");
+
+  var pct = typeof summary.context_pct === "number" ? summary.context_pct : 0;
+  stats.appendChild(stat(
+    pct.toFixed(1) + "%", "of the context window",
+    num(summary.total_tokens) + " tokens across " +
+      num(summary.tool_count) + " " + plural(summary.tool_count, "tool")));
+
+  var counts = summary.effect_counts || {};
+  var risky = (counts.write || 0) + (counts.external || 0) + (counts.irreversible || 0);
+  stats.appendChild(stat(
+    num(risky), "can change something",
+    (counts.irreversible || 0) + " irreversible, " + (counts.external || 0) + " outbound"));
+
+  var findings = data.findings || [];
+  var serious = findings.filter(function (f) {
+    return f.severity === "critical" || f.severity === "high";
+  }).length;
+  stats.appendChild(stat(
+    num(serious), "findings needing action",
+    findings.length + " " + plural(findings.length, "finding") + " in total"));
+
+  box.appendChild(stats);
+
+  var lede = el("div", "lede");
+  lede.appendChild(document.createTextNode("In "));
+  lede.appendChild(el("strong", null, summary.heaviest_context_label || "this context"));
+  lede.appendChild(document.createTextNode(
+    ", " + num(risky) + " " + plural(risky, "tool") + " can write, delete, send or spend"));
+  var unauth = summary.unauthenticated_high_consequence || 0;
+  lede.appendChild(document.createTextNode(unauth
+    ? "; " + num(unauth) + " of them are reachable with no authentication."
+    : ". None are reachable without authentication."));
+  box.appendChild(lede);
+  root.appendChild(box);
+}
+
+function stat(value, key, detail) {
+  var s = el("div", "stat");
+  s.appendChild(el("div", "n", value));
+  s.appendChild(el("div", "k", key));
+  if (detail) s.appendChild(el("div", "d", detail));
+  return s;
+}
+
+function renderInventory(root, data, summary) {
+  section(root, "Inventory");
+  var p = el("p", "note",
+    num(summary.entry_count) + " configured " + plural(summary.entry_count, "entry", "entries") +
+    " resolve to " + num(summary.distinct_server_count) + " distinct " +
+    plural(summary.distinct_server_count, "server") + " across " +
+    num(summary.context_count) + " " + plural(summary.context_count, "context") +
+    ". A conversation loads exactly one context, so the report is scoped to the heaviest.");
+  root.appendChild(p);
+
+  var contexts = (data.contexts || []).slice().sort(function (a, b) {
+    return (b.token_total || 0) - (a.token_total || 0);
+  });
+  var tbody = table(root, ["Context", "Servers", "Tools", "Tokens", "Shadowed"],
+    [null, "num", "num", "num", "num"]);
+  contexts.forEach(function (ctx) {
+    var label = el("span", null, ctx.label);
+    if (ctx.key === summary.heaviest_context) {
+      label.textContent = ctx.label;
+      var mark = el("span", "tag", "heaviest");
+      var holder = el("span");
+      holder.appendChild(label);
+      holder.appendChild(document.createTextNode(" "));
+      holder.appendChild(mark);
+      label = holder;
+    }
+    row(tbody, [
+      { node: label },
+      { text: num(ctx.server_count), cls: "num" },
+      { text: num(ctx.tool_count), cls: "num" },
+      { text: num(ctx.token_total), cls: "num" },
+      { text: (ctx.shadowed || []).length || "", cls: "num" }
+    ]);
+  });
+
+  var servers = (data.servers || []).filter(function (s) {
+    return !summary.heaviest_context ||
+      ((data.contexts || []).find(function (c) { return c.key === summary.heaviest_context; })
+        || { servers: [] }).servers.indexOf(s.key) !== -1;
+  });
+  if (!servers.length) return;
+  root.appendChild(el("h3", null, "Servers in the heaviest context"));
+  var sbody = table(root, ["Server", "Scope", "Transport", "Endpoint", "Auth", "Tools", "Tokens", "Status"],
+    [null, null, null, null, null, "num", "num", null]);
+  servers.forEach(function (s) {
+    row(sbody, [
+      { text: s.name },
+      { text: s.scope },
+      { text: s.transport },
+      { text: s.url_host || s.command_basename, cls: "mono" },
+      { text: (s.auth_method || "").replace("_", "-") },
+      { text: s.tool_count ? num(s.tool_count) : "", cls: "num" },
+      { text: s.token_total ? num(s.token_total) : "", cls: "num" },
+      { text: STATUS_LABEL[s.fetch_status] !== undefined
+                ? STATUS_LABEL[s.fetch_status]
+                : String(s.fetch_status || "").replace(/_/g, " ") }
+    ]);
+  });
+}
+
+function renderCost(root, data, summary) {
+  var breakdown = data.cost_breakdown || [];
+  section(root, "Context cost");
+  if (!breakdown.length) {
+    root.appendChild(el("p", "empty",
+      "No tool definitions were retrieved, so cost could not be measured. Re-run with --connect."));
+    return;
+  }
+  root.appendChild(el("p", "note",
+    "Every tool definition below is sent on every request in this context, before " +
+    "any user input. Token counts use " + (summary.token_method || "an estimate") + "."));
+
+  var top = breakdown.slice(0, 15);
+  var max = top[0].tokens || 1;
+  var tbody = table(root, ["Tool", "Server", "Tokens", "Share"], [null, null, "num", null]);
+  var total = summary.total_tokens || breakdown.reduce(function (a, r) { return a + r.tokens; }, 0);
+  top.forEach(function (r) {
+    row(tbody, [
+      { text: r.tool, cls: "mono" },
+      { text: (r.server || "").split("/").pop() },
+      { text: num(r.tokens), cls: "num" },
+      { node: bar(r.tokens / max) }
+    ]);
+  });
+  if (breakdown.length > top.length) {
+    root.appendChild(el("p", "note",
+      "Showing the " + top.length + " heaviest of " + breakdown.length +
+      " tools. These account for " +
+      Math.round(100 * top.reduce(function (a, r) { return a + r.tokens; }, 0) / total) +
+      "% of the context budget."));
+  }
+}
+
+function renderCapability(root, data, summary) {
+  section(root, "Capability and risk");
+  var counts = summary.effect_counts || {};
+  var order = ["read", "write", "external", "irreversible"];
+  var labels = {
+    read: "Read only",
+    write: "Can modify data",
+    external: "Can send, publish or spend",
+    irreversible: "Can do something irreversible"
+  };
+  var total = order.reduce(function (a, k) { return a + (counts[k] || 0); }, 0) || 1;
+  var tbody = table(root, ["Capability", "Tools", "Share"], [null, "num", null]);
+  order.forEach(function (k) {
+    row(tbody, [
+      { text: labels[k] },
+      { text: num(counts[k] || 0), cls: "num" },
+      { node: bar((counts[k] || 0) / total) }
+    ]);
+  });
+  if (summary.mislabelled_tools) {
+    root.appendChild(el("p", "note",
+      num(summary.mislabelled_tools) + " " + plural(summary.mislabelled_tools, "tool") + " " +
+      verb(summary.mislabelled_tools, "declares", "declare") +
+      " a safety annotation that its own name or schema contradicts. " +
+      "A wrong annotation is worse than a missing one, because clients act on it."));
+  }
+}
+
+function renderDrift(root, data) {
+  section(root, "Drift");
+  var drift = data.drift;
+  if (!drift || !drift.length) {
+    root.appendChild(el("p", "empty",
+      "No baseline recorded yet, so no drift can be reported. Drift detection compares " +
+      "tool definitions against an approved baseline and identifies definitions that " +
+      "changed without review."));
+    return;
+  }
+  var tbody = table(root, ["Severity", "Server", "Tool", "Change"]);
+  drift.forEach(function (d) {
+    row(tbody, [
+      { node: el("span", "sev sev-" + d.severity, d.severity) },
+      { text: d.server }, { text: d.tool }, { text: d.detail }
+    ]);
+  });
+}
+
+function renderFindings(root, data) {
+  section(root, "Findings");
+  var findings = (data.findings || []).slice();
+  if (!findings.length) {
+    root.appendChild(el("p", "empty", "No findings."));
+    return;
+  }
+  var tally = {};
+  findings.forEach(function (f) { tally[f.severity] = (tally[f.severity] || 0) + 1; });
+  var line = SEVERITIES.filter(function (s) { return tally[s]; })
+    .map(function (s) { return tally[s] + " " + s; }).join("  ·  ");
+  root.appendChild(el("p", "note", line));
+
+  findings.sort(function (a, b) {
+    var d = SEVERITIES.indexOf(a.severity) - SEVERITIES.indexOf(b.severity);
+    return d !== 0 ? d : String(a.id).localeCompare(String(b.id));
+  });
+  findings.forEach(function (f) { root.appendChild(findingCard(f)); });
+}
+
+function findingCard(f) {
+  var card = el("div", "finding " + f.severity);
+  var head = el("div", "head");
+  head.appendChild(el("span", "sev sev-" + f.severity, f.severity));
+  head.appendChild(el("span", "id", f.id));
+  head.appendChild(el("span", "title", f.title));
+  card.appendChild(head);
+  card.appendChild(el("p", "detail", f.detail));
+
+  var affected = f.affected || [];
+  if (affected.length) {
+    var shown = affected.slice(0, 8);
+    var list = el("ul", "affected");
+    shown.forEach(function (a) {
+      list.appendChild(el("li", null, a.server + (a.tool ? " / " + a.tool : "")));
+    });
+    card.appendChild(list);
+    if (affected.length > shown.length) {
+      var more = el("details", "more");
+      more.appendChild(el("summary", null,
+        "show " + (affected.length - shown.length) + " more"));
+      var rest = el("ul", "affected");
+      affected.slice(shown.length).forEach(function (a) {
+        rest.appendChild(el("li", null, a.server + (a.tool ? " / " + a.tool : "")));
+      });
+      more.appendChild(rest);
+      card.appendChild(more);
+    }
+  }
+
+  var fix = el("p", "fix");
+  fix.appendChild(el("b", null, "Fix: "));
+  fix.appendChild(document.createTextNode(f.fix || f.remediation || ""));
+  card.appendChild(fix);
+
+  if (f.narrative) card.appendChild(el("div", "narrative", f.narrative));
+  return card;
+}
+
+function renderBenchmark(root, data) {
+  if (!data.benchmark) return;
+  section(root, "Peer comparison");
+  var b = data.benchmark;
+  var tbody = table(root, ["Measure", "You", "Peer median", "Percentile"],
+    [null, "num", "num", "num"]);
+  (b.rows || []).forEach(function (r) {
+    row(tbody, [
+      { text: r.label }, { text: num(r.value), cls: "num" },
+      { text: num(r.median), cls: "num" }, { text: r.percentile, cls: "num" }
+    ]);
+  });
+}
+
+function renderMethodology(root, data, summary) {
+  section(root, "Method and limits");
+  var items = [];
+  items.push("Cost is reported per context - one client in one project - because a " +
+    "conversation loads exactly one. Entries that lose scope precedence are reported " +
+    "as shadowed rather than counted.");
+  items.push("Token counts: " + (summary.token_method === "tiktoken"
+    ? "tiktoken cl100k_base, which approximates Claude tokenisation."
+    : "character-ratio approximation calibrated against real tool definitions; " +
+      "roughly 4% median error per tool.") +
+    " What is counted is the tool name, title, description and schemas, as sent to the model.");
+  items.push("Effect classes are inferred from declared annotations, the verb in the tool " +
+    "name, and schema parameters. Annotations raise a classification but never lower it. " +
+    "Heuristics version " + (data.heuristics_version || "?") + ".");
+  if (summary.mode !== "connect") {
+    items.push("Servers were not contacted, so no tool definitions, costs or effect classes " +
+      "were measured. Only configuration-level findings appear.");
+  }
+  items.push("This detects change and misconfiguration, not initial badness. A server that " +
+    "is malicious from the first scan, or one that changes its runtime behaviour without " +
+    "changing its tool definitions, is out of scope.");
+  items.push("This report was rendered entirely in your browser. The file makes no network " +
+    "requests of any kind.");
+
+  var ul = el("ul");
+  items.forEach(function (t) { ul.appendChild(el("li", null, t)); });
+  root.appendChild(ul);
+
+  var errors = data.collection_errors || [];
+  if (errors.length) {
+    root.appendChild(el("h3", null, "Collection errors"));
+    var tbody = table(root, ["Kind", "Path", "Detail"]);
+    errors.forEach(function (e) {
+      row(tbody, [{ text: e.kind }, { text: e.path, cls: "mono" }, { text: e.detail }]);
+    });
+  }
+}
+
+/* --- input ------------------------------------------------------------- */
+
+function load(text, source) {
+  var data;
+  try {
+    data = JSON.parse(text);
+  } catch (err) {
+    alert("That file is not valid JSON" + (source ? " (" + source + ")" : "") + ".");
+    return;
+  }
+  if (!data || typeof data !== "object" || !data.summary) {
+    alert("That does not look like a findings.json produced by this tool.");
+    return;
+  }
+  render(data);
+}
+
+(function init() {
+  var embedded = null;
+  try {
+    embedded = JSON.parse(document.getElementById("findings-data").textContent);
+  } catch (err) {
+    embedded = null;
+  }
+  if (embedded && embedded.summary) {
+    render(embedded);
+    return;
+  }
+
+  var zone = document.getElementById("dropzone");
+  var picker = document.getElementById("pick");
+
+  function readFile(file) {
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () { load(String(reader.result), file.name); };
+    reader.readAsText(file);
+  }
+
+  picker.addEventListener("change", function () { readFile(picker.files[0]); });
+  ["dragenter", "dragover"].forEach(function (name) {
+    zone.addEventListener(name, function (e) {
+      e.preventDefault(); zone.classList.add("over");
+    });
+  });
+  ["dragleave", "drop"].forEach(function (name) {
+    zone.addEventListener(name, function (e) {
+      e.preventDefault(); zone.classList.remove("over");
+    });
+  });
+  zone.addEventListener("drop", function (e) {
+    readFile(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]);
+  });
+})();
+</script>
+</body>
+</html>
