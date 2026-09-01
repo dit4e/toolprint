@@ -140,6 +140,21 @@ Python 3.9+. The core has no required dependencies. Without `tiktoken`, token
 counts use a character ratio calibrated against real tool definitions (4.55
 chars/token, ~4% median error), and the method used is recorded per server.
 
+## Does drift actually happen?
+
+[dit4e/toolprint-watch](https://github.com/dit4e/toolprint-watch) checks 27
+public MCP servers daily against an approved baseline and commits what changed,
+so the git history of that baseline is an open record of how often tool
+definitions move. It is a separate repository so a year of observation commits
+does not bury this one.
+
+Worth knowing what it cannot see: of 18 well-known public remote MCP endpoints,
+**two** served `tools/list` without credentials. Remote servers are the category
+where a definition change is least visible to the people using them — no package
+update, no lockfile line — and also the category nobody outside the vendor can
+audit. That is an argument for running `toolprint check` in your own CI, where
+you already hold the credentials, rather than waiting for someone else to notice.
+
 ## Status
 
 Early, but complete through drift. `scan`, `check`, baselines, approvals,
