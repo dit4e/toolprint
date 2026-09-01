@@ -20,6 +20,23 @@ from .model import CollectionError, Inventory, Server
 DISABLED_KEYS = ("disabled", "isDisabled")
 
 
+def normalise_root(path: Optional[str]) -> Optional[str]:
+    """Canonical form of a project path, so one project is always one context.
+
+    Claude Code stores project keys as the user typed them, while discovered
+    config files carry the path we globbed. On macOS those routinely differ -
+    /var vs /private/var, /tmp vs /private/tmp - and a symlinked home or
+    checkout does the same on Linux. Left unnormalised, one project splits into
+    two contexts and every per-context number is computed over half the servers.
+    """
+    if not path:
+        return None
+    try:
+        return str(Path(path).resolve())
+    except OSError:
+        return path
+
+
 def _walk_container(doc: object, steps: Sequence[str], label: Optional[str] = None) -> Iterator[Tuple[Optional[str], dict]]:
     """Yield (label, servers_dict) for each container the descriptor selects.
 
@@ -72,6 +89,7 @@ def parse_server(
     scope: str,
     scope_detail: Optional[str],
     source_path: str,
+    project_root: Optional[str] = None,
 ) -> Optional[Server]:
     if not isinstance(raw, dict):
         return None
@@ -101,6 +119,7 @@ def parse_server(
         scope=scope,
         scope_detail=scope_detail,
         source_path=source_path,
+        project_root=project_root,
         transport=transport,
         command=command,
         args=args,
@@ -108,6 +127,8 @@ def parse_server(
         env_names=sorted(env.keys()),
         header_names=sorted(headers.keys()),
         headers_helper=headers_helper,
+        raw_headers={k: v for k, v in headers.items() if isinstance(v, str)},
+        raw_env={k: v for k, v in env.items() if isinstance(v, str)},
         has_oauth=has_oauth,
         enabled=enabled,
         auth_method=auth_method,
@@ -116,7 +137,12 @@ def parse_server(
     )
 
 
-def parse_file(path: Path, client: registry.Client, source: registry.Source) -> Tuple[List[Server], List[CollectionError]]:
+def parse_file(
+    path: Path,
+    client: registry.Client,
+    source: registry.Source,
+    project_root: Optional[str] = None,
+) -> Tuple[List[Server], List[CollectionError]]:
     servers: List[Server] = []
     errors: List[CollectionError] = []
     try:
@@ -134,7 +160,14 @@ def parse_file(path: Path, client: registry.Client, source: registry.Source) -> 
         if not isinstance(container, dict):
             continue
         for name, raw in container.items():
-            server = parse_server(name, raw, client.id, source.scope, label, str(path))
+            # Claude Code's local scope names its project in the container key;
+            # workspace/project scopes take it from the root the file was found under.
+            applies_to = normalise_root(
+                label if source.container is registry.AT_CLAUDE_PROJECTS else project_root
+            )
+            server = parse_server(
+                name, raw, client.id, source.scope, label, str(path), applies_to
+            )
             if server is None:
                 errors.append(
                     CollectionError(
@@ -165,7 +198,7 @@ def claude_code_project_roots(home: Path) -> List[Path]:
     projects = doc.get("projects")
     if not isinstance(projects, dict):
         return []
-    return [Path(p) for p in projects if isinstance(p, str) and Path(p).is_dir()]
+    return [Path(p).resolve() for p in projects if isinstance(p, str) and Path(p).is_dir()]
 
 
 def expand_project_roots(patterns: Iterable[str], home: Path, use_claude_projects: bool = True) -> List[Path]:
@@ -192,15 +225,18 @@ def expand_project_roots(patterns: Iterable[str], home: Path, use_claude_project
     return roots
 
 
-def _candidate_paths(source: registry.Source, home: Path, project_roots: Sequence[Path]) -> List[Path]:
+def _candidate_paths(
+    source: registry.Source, home: Path, project_roots: Sequence[Path]
+) -> List[Tuple[Path, Optional[str]]]:
     bases = [home] if source.where == registry.HOME else list(project_roots)
-    paths: List[Path] = []
+    paths: List[Tuple[Path, Optional[str]]] = []
     for base in bases:
+        root = None if source.where == registry.HOME else str(base)
         pattern = str(base / source.pattern)
         if any(ch in source.pattern for ch in "*?["):
-            paths.extend(Path(p) for p in sorted(glob.glob(pattern)))
+            paths.extend((Path(p), root) for p in sorted(glob.glob(pattern)))
         else:
-            paths.append(Path(pattern))
+            paths.append((Path(pattern), root))
     return paths
 
 
@@ -239,11 +275,11 @@ def collect(
         for source in client.sources:
             if not registry.applies_here(source):
                 continue
-            for path in _candidate_paths(source, home, roots):
+            for path, root in _candidate_paths(source, home, roots):
                 if not path.is_file():
                     continue
                 inventory.paths_scanned.append(str(path))
-                servers, errors = parse_file(path, client, source)
+                servers, errors = parse_file(path, client, source, root)
                 inventory.servers.extend(servers)
                 inventory.errors.extend(errors)
 

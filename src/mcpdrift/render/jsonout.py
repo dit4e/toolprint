@@ -12,9 +12,11 @@ contract.
 from __future__ import annotations
 
 from collections import OrderedDict
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Sequence
 
 from .. import __version__
+from ..connect import context_cost
+from ..context import Context, all_shadowed
 from ..model import Inventory, Server
 
 
@@ -40,16 +42,52 @@ def server_dict(server: Server) -> Dict[str, Any]:
         ]),
         ("parse_notes", server.parse_notes),
         ("fetch_status", server.fetch_status),
+        ("fetch_detail", server.safe_detail),
+        ("protocol_era", server.protocol_era),
+        ("protocol_version", server.protocol_version),
+        ("tool_count", len(server.tools)),
+        ("token_total", server.token_total),
+        ("token_method", server.token_method),
     ])
 
 
-def inventory_dict(inventory: Inventory) -> Dict[str, Any]:
+def context_dict(context: Context) -> Dict[str, Any]:
+    tool_count, total, method = context_cost(context)
+    return OrderedDict([
+        ("client", context.client),
+        ("project", context.project),
+        ("label", context.label),
+        ("server_count", len(context.servers)),
+        ("tool_count", tool_count),
+        ("token_total", total),
+        ("token_method", method),
+        ("servers", [s.key for s in context.servers]),
+        ("shadowed", [
+            OrderedDict([
+                ("name", item.loser.name),
+                ("loser_scope", item.loser.scope),
+                ("loser_source", item.loser.source_path),
+                ("winner_scope", item.winner.scope),
+                ("winner_source", item.winner.source_path),
+                ("endpoint_differs", item.endpoint_differs),
+            ])
+            for item in context.shadowed
+        ]),
+    ])
+
+
+def inventory_dict(
+    inventory: Inventory, contexts: Optional[Sequence[Context]] = None
+) -> Dict[str, Any]:
+    connected = any(s.fetch_status != "not_attempted" for s in inventory.servers)
     return OrderedDict([
         ("schema_version", 0),  # 0 = pre-findings.json interim shape
         ("generator", "mcpdrift/{}".format(__version__)),
-        ("mode", "no_connect"),
+        ("mode", "connect" if connected else "no_connect"),
         ("clients_found", inventory.clients_found),
         ("paths_scanned", inventory.paths_scanned),
+        ("contexts", [context_dict(c) for c in (contexts or [])]),
+        ("shadowed_total", len(all_shadowed(contexts or []))),
         ("servers", [server_dict(s) for s in inventory.servers]),
         ("collection_errors", [
             OrderedDict([

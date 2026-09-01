@@ -1,16 +1,22 @@
-"""Terminal renderer for the static inventory.
+"""Terminal renderer.
 
 Emits redacted fields only: names, basenames and hosts. No env values, no header
 values, no full command lines, no URL paths or query strings. The renderer is the
 enforcement point for that rule, so it reads Server.command_basename and
 Server.url_host rather than the raw fields.
+
+The headline is the heaviest *context*, not the machine-wide total. A conversation
+happens in one client in one project, so that pairing is the only unit in which
+"what do my tools cost per conversation" has an answer.
 """
 
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Dict, List, Optional, Sequence
 
-from .. import __version__
+from .. import __version__, tokens
+from ..connect import context_cost
+from ..context import Context, all_shadowed
 from ..model import AUTH_LITERAL_SECRET, Inventory, Server
 
 AUTH_LABEL = {
@@ -20,6 +26,15 @@ AUTH_LABEL = {
     "oauth": "oauth",
     "none": "none",
     "unknown": "unknown",
+}
+STATUS_LABEL = {
+    "ok": "ok",
+    "auth_required": "auth required",
+    "unreachable": "unreachable",
+    "error": "error",
+    "unsupported": "unsupported transport",
+    "not_mcp": "not an MCP endpoint",
+    "not_attempted": "not attempted",
 }
 
 
@@ -31,7 +46,10 @@ def _counts(values: List[str]) -> str:
     tally: Dict[str, int] = {}
     for value in values:
         tally[value] = tally.get(value, 0) + 1
-    return " · ".join("{} {}".format(count, name) for name, count in sorted(tally.items(), key=lambda kv: (-kv[1], kv[0])))
+    return " · ".join(
+        "{} {}".format(count, name)
+        for name, count in sorted(tally.items(), key=lambda kv: (-kv[1], kv[0]))
+    )
 
 
 def _endpoint(server: Server) -> str:
@@ -40,96 +58,199 @@ def _endpoint(server: Server) -> str:
     return server.url_host or "?"
 
 
-def render(inventory: Inventory, tool_name: str = "mcpdrift") -> str:
-    out: List[str] = []
-    servers = inventory.servers
-    add = out.append
+def _shorten(path: Optional[str], width: int = 44) -> str:
+    if not path:
+        return "-"
+    if len(path) <= width:
+        return path
+    return "..." + path[-(width - 3):]
 
-    add("{} {} — static inventory (--no-connect)".format(tool_name, __version__))
+
+def render(
+    inventory: Inventory,
+    contexts: Optional[Sequence[Context]] = None,
+    window: int = 200000,
+    tool_name: str = "mcpdrift",
+) -> str:
+    out: List[str] = []
+    add = out.append
+    servers = inventory.servers
+    connected = any(s.fetch_status != "not_attempted" for s in servers)
+    mode = "--connect" if connected else "--no-connect"
+
+    add("{} {} — {}".format(tool_name, __version__, mode))
     add("")
 
     if not servers:
-        add("  No MCP servers found in {} config file(s) scanned.".format(len(inventory.paths_scanned)))
+        add("  No MCP servers found in {} scanned.".format(
+            _plural(len(inventory.paths_scanned), "config file")))
         _render_errors(inventory, add)
         return "\n".join(out)
 
-    # Entries and distinct servers are different numbers and the gap is often
-    # large: the same server is commonly registered in several clients and, in
-    # Claude Code, in several scopes of one file. Reporting only the entry count
-    # overstates the real tool surface, and a reader who spots that stops
-    # trusting the rest of the report.
+    if connected and contexts:
+        _render_cost(contexts, window, add)
+
+    _render_inventory(inventory, servers, add)
+    if contexts:
+        _render_contexts(contexts, connected, add)
+        _render_shadowed(contexts, add)
+    _render_credentials(servers, add)
+    if connected:
+        _render_fetch_failures(servers, add)
+        _render_method(servers, add)
+    _render_notes(servers, add)
+    _render_errors(inventory, add)
+    return "\n".join(out)
+
+
+def _render_cost(contexts: Sequence[Context], window: int, add) -> None:
+    costed = [(c,) + context_cost(c) for c in contexts]
+    costed = [row for row in costed if row[2] > 0]
+    if not costed:
+        return
+    costed.sort(key=lambda row: -row[2])
+    context, tool_count, total, _ = costed[0]
+
+    add("  HEAVIEST CONTEXT — {}".format(context.label))
+    add("    {} · {} · {} tokens · {:.1f}% of a {:,}-token window".format(
+        _plural(len(context.servers), "server"),
+        _plural(tool_count, "tool"),
+        "{:,}".format(total),
+        100.0 * total / window if window else 0.0,
+        window,
+    ))
+    add("")
+    add("    A conversation loads exactly one context. This is the cost of the")
+    add("    most expensive one, before you have typed anything.")
+    add("")
+
+
+def _render_inventory(inventory: Inventory, servers: List[Server], add) -> None:
     identities = {(s.name, s.transport, _endpoint(s)) for s in servers}
-    duplicated = len(servers) - len(identities)
-    add("  {} · {} · {} · {}".format(
+    add("  INVENTORY")
+    add("    {} · {} · {} · {}".format(
         _plural(len(servers), "entry", "entries"),
         _plural(len(identities), "distinct server"),
         _plural(len(inventory.clients_found), "client"),
         _plural(len(inventory.paths_scanned), "config file"),
     ))
-    if duplicated:
-        add("  {} entr{} duplicate a server already registered elsewhere".format(
-            duplicated, "y" if duplicated == 1 else "ies"))
-    add("  transport: {}".format(_counts([s.transport for s in servers])))
-    add("  auth:      {}".format(_counts([AUTH_LABEL.get(s.auth_method, s.auth_method) for s in servers])))
+    add("    transport: {}".format(_counts([s.transport for s in servers])))
+    add("    auth:      {}".format(
+        _counts([AUTH_LABEL.get(s.auth_method, s.auth_method) for s in servers])))
     disabled = [s for s in servers if not s.enabled]
     if disabled:
-        add("  {} server(s) present but disabled".format(len(disabled)))
+        add("    {} present but disabled".format(_plural(len(disabled), "server")))
     add("")
 
-    name_w = max(len(s.name) for s in servers)
-    name_w = min(max(name_w, 4), 28)
-    endpoint_w = min(max((len(_endpoint(s)) for s in servers), default=8), 34)
 
-    group = None
-    for server in servers:
-        if server.scope == "explicit":
-            header = server.source_path
-        else:
-            header = "{} / {}".format(server.client, server.scope)
-            if server.scope_detail:
-                header += "  [{}]".format(server.scope_detail)
-        if header != group:
-            group = header
-            add("  {}".format(header))
-        flag = " " if server.enabled else "-"
-        extras = []
-        if server.header_names:
-            extras.append("hdr: " + ",".join(server.header_names))
-        if server.env_names:
-            extras.append("env: " + ",".join(server.env_names))
-        if server.headers_helper:
-            extras.append("headersHelper")
-        add("   {} {:<{nw}}  {:<7} {:<{ew}} {:<14} {}".format(
-            flag,
-            server.name[:name_w],
-            server.transport,
-            _endpoint(server)[:endpoint_w],
-            AUTH_LABEL.get(server.auth_method, server.auth_method),
-            "  ".join(extras),
-            nw=name_w, ew=endpoint_w,
-        ).rstrip())
+def _render_contexts(contexts: Sequence[Context], connected: bool, add) -> None:
+    add("  CONTEXTS — what actually loads, after scope precedence")
+    for context in contexts:
+        tool_count, total, _ = context_cost(context)
+        summary = _plural(len(context.servers), "server")
+        if connected and total:
+            summary += " · {} tools · {:,} tokens".format(tool_count, total)
+        if context.shadowed:
+            summary += " · {} shadowed".format(len(context.shadowed))
+        add("    {}".format(context.label))
+        add("      {}".format(summary))
+        for server in context.servers:
+            status = ""
+            if connected:
+                if server.fetch_status == "ok":
+                    status = "{:>4} tools  {:>7} tok".format(
+                        len(server.tools), "{:,}".format(server.token_total or 0))
+                else:
+                    status = STATUS_LABEL.get(server.fetch_status, server.fetch_status)
+            add("        {:<20} {:<6} {:<20} {:<14} {}".format(
+                server.name[:20], server.scope[:6], _endpoint(server)[:20],
+                AUTH_LABEL.get(server.auth_method, server.auth_method), status).rstrip())
+        add("")
+
+
+def _render_shadowed(contexts: Sequence[Context], add) -> None:
+    shadowed = all_shadowed(contexts)
+    if not shadowed:
+        return
+    conflicts = [s for s in shadowed if s.endpoint_differs]
+    add("  SHADOWED CONFIGURATION — {} that never load".format(
+        _plural(len(shadowed), "entry", "entries")))
+    add("    A more specific scope defines the same name. The whole entry from the")
+    add("    winning scope is used; nothing is merged. Editing a shadowed entry has")
+    add("    no effect and gives no warning.")
+    add("")
+    for item in shadowed:
+        marker = "  !" if item.endpoint_differs else "   "
+        add("   {} {:<18} {} scope in {}".format(
+            marker, item.loser.name[:18], item.loser.scope, _shorten(item.loser.source_path)))
+        add("        overridden by {} scope: {} {}".format(
+            item.winner.scope, item.winner.transport, _endpoint(item.winner)))
+        if item.endpoint_differs:
+            add("        ! points somewhere different ({} {}) — OAuth is stored per".format(
+                item.loser.transport, _endpoint(item.loser)))
+            add("          endpoint, so which definition loads changes what you are signed in to")
+    if conflicts:
+        add("")
+        add("    {} shadowed {} point somewhere different from the entry that wins.".format(
+            len(conflicts), "entry" if len(conflicts) == 1 else "entries"))
     add("")
 
+
+def _render_credentials(servers: List[Server], add) -> None:
     exposed = [s for s in servers if s.auth_method == AUTH_LITERAL_SECRET]
-    if exposed:
-        add("  ATTENTION — literal credentials in config files")
-        for server in exposed:
-            for location in server.secret_locations:
-                add("    {}  {}".format(server.key, location.field))
-                add("        {}".format(location.reason))
-        add("    Config files are not a credential store. Move these to environment")
-        add("    variables and reference them as ${VAR} in the config.")
-        add("")
+    if not exposed:
+        return
+    add("  ATTENTION — literal credentials in config files")
+    for server in exposed:
+        for location in server.secret_locations:
+            add("    {}  {}".format(server.key, location.field))
+            add("        {}".format(location.reason))
+    add("    Config files are not a credential store. Move these to environment")
+    add("    variables and reference them as ${VAR} in the config.")
+    add("")
 
+
+def _render_fetch_failures(servers: List[Server], add) -> None:
+    failed = [s for s in servers if s.fetch_status not in ("ok", "not_attempted")]
+    if not failed:
+        return
+    seen = set()
+    add("  RETRIEVAL FAILURES")
+    for server in failed:
+        identity = (server.name, server.fetch_status, server.fetch_detail)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        add("    {:<24} {:<22} {}".format(
+            server.name[:24],
+            STATUS_LABEL.get(server.fetch_status, server.fetch_status),
+            (server.safe_detail or "")[:64]))
+    add("")
+
+
+def _render_method(servers: List[Server], add) -> None:
+    methods = sorted({s.token_method for s in servers if s.token_method})
+    eras = sorted({s.protocol_era for s in servers if s.protocol_era})
+    versions = sorted({s.protocol_version for s in servers if s.protocol_version})
+    add("  METHOD")
+    for method in methods:
+        add("    tokens:   {}".format(tokens.describe_method(method)))
+    if not methods:
+        add("    tokens:   not counted")
+    if eras:
+        add("    protocol: {} ({})".format(", ".join(eras), ", ".join(versions)))
+    add("    counted:  tool name, title, description and schemas, as sent to the model")
+    add("")
+
+
+def _render_notes(servers: List[Server], add) -> None:
     notes = [(s.key, n) for s in servers for n in s.parse_notes]
-    if notes:
-        add("  notes")
-        for key, note in notes:
-            add("    {}: {}".format(key, note))
-        add("")
-
-    _render_errors(inventory, add)
-    return "\n".join(out)
+    if not notes:
+        return
+    add("  notes")
+    for key, note in notes:
+        add("    {}: {}".format(key, note))
+    add("")
 
 
 def _render_errors(inventory: Inventory, add) -> None:

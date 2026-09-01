@@ -20,6 +20,9 @@ class DiscoveryCase(unittest.TestCase):
         self.home = self.tmp / "home"
         self.project = self.tmp / "home" / "work" / "proj"
         fixture.build(self.home, self.project)
+        # Paths are normalised to their resolved form so one project is always
+        # one context; on macOS the temp dir is reached via a /var symlink.
+        self.project_key = str(self.project.resolve())
         self.inv = discover.collect(home=self.home, project_patterns=[str(self.project)])
         self.by_key = {s.key: s for s in self.inv.servers}
 
@@ -34,7 +37,7 @@ class TestContainerShapes(DiscoveryCase):
         self.assertEqual(len(user), 6)
         self.assertEqual(len(local), 1)
         # The wildcard step records which project the local-scope server belongs to.
-        self.assertEqual(local[0].scope_detail, str(self.project))
+        self.assertEqual(discover.normalise_root(local[0].scope_detail), self.project_key)
 
     def test_vscode_uses_servers_key_not_mcpservers(self):
         vscode = [s for s in self.inv.servers if s.client == "vscode"]
@@ -50,7 +53,7 @@ class TestContainerShapes(DiscoveryCase):
 
     def test_project_roots_derived_from_claude_code(self):
         roots = discover.claude_code_project_roots(self.home)
-        self.assertEqual([str(r) for r in roots], [str(self.project)])
+        self.assertEqual([str(r) for r in roots], [self.project_key])
 
 
 class TestTransport(DiscoveryCase):

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 # Container shapes, named so the table below reads as data.
 AT_MCPSERVERS = ("mcpServers",)
@@ -46,6 +46,16 @@ class Client:
     id: str
     name: str
     sources: List[Source] = field(default_factory=list)
+    # Scope precedence, lowest rank wins. Verified 2026-08-31 for all three
+    # multi-scope clients; all agree that the more specific scope wins, that the
+    # *whole* entry from the winning scope is used, and that there is no field
+    # merging. A losing entry does not partially apply - it does not apply at all,
+    # which is what makes shadowed config invisible to the person who wrote it.
+    precedence: Dict[str, int] = field(default_factory=dict)
+
+    def rank(self, scope: str) -> int:
+        # Unranked scopes sort last but stay deterministic.
+        return self.precedence.get(scope, 99)
 
 
 CLIENTS: List[Client] = [
@@ -58,6 +68,7 @@ CLIENTS: List[Client] = [
             Source(HOME, ".claude.json", "local", AT_CLAUDE_PROJECTS),
             Source(PROJECT, ".mcp.json", "project", AT_MCPSERVERS),
         ],
+        precedence={"local": 0, "project": 1, "user": 2},
     ),
     Client(
         id="claude_desktop",
@@ -97,6 +108,7 @@ CLIENTS: List[Client] = [
             Source(HOME, ".cursor/mcp.json", "user", AT_MCPSERVERS),
             Source(PROJECT, ".cursor/mcp.json", "project", AT_MCPSERVERS),
         ],
+        precedence={"project": 0, "user": 1},
     ),
     Client(
         id="vscode",
@@ -139,6 +151,7 @@ CLIENTS: List[Client] = [
                 ("win32",),
             ),
         ],
+        precedence={"workspace": 0, "user": 1},
     ),
     Client(
         id="copilot",

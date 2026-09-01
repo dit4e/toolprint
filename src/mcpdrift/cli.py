@@ -12,7 +12,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import TOOL_NAME, __version__, discover, registry
+from . import TOOL_NAME, __version__, connect, context, discover, registry
 from .render import jsonout, text
 
 EXIT_OK = 0
@@ -41,7 +41,15 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--no-connect", action="store_true", default=True,
                       help="parse configs only; never start or contact servers (default)")
     scan.add_argument("--connect", dest="no_connect", action="store_false",
-                      help="retrieve live tools/list (not implemented until M1)")
+                      help="retrieve live tools/list; spawns stdio servers (see --dry-run)")
+    scan.add_argument("--dry-run", action="store_true",
+                      help="with --connect, print exactly what would be started or contacted, then stop")
+    scan.add_argument("--window", type=int, default=200000, metavar="N",
+                      help="context window used for %% calculations (default 200000)")
+    scan.add_argument("--timeout", type=float, default=15.0, metavar="SECONDS",
+                      help="per-request timeout when connecting (default 15)")
+    scan.add_argument("--yes", action="store_true",
+                      help="skip the confirmation prompt before contacting servers")
     scan.add_argument("--format", choices=["text", "json"], default="text")
     scan.add_argument("--out", metavar="PATH", help="write output to a file instead of stdout")
 
@@ -50,24 +58,41 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def cmd_scan(args: argparse.Namespace) -> int:
-    if not args.no_connect:
-        sys.stderr.write(
-            "--connect is not implemented yet (arrives in M1). Re-run without it for a\n"
-            "config-only inventory, which needs no network and spawns no processes.\n"
-        )
-        return EXIT_ERROR
-
     inventory = discover.collect(
         clients=args.client or None,
         explicit_configs=args.config or None,
         project_patterns=args.project or None,
         use_claude_projects=not args.no_project_autodetect,
     )
+    contexts = context.resolve_all(inventory)
+
+    if not args.no_connect:
+        plan = connect.plan(contexts)
+        # Say exactly what will happen before anything happens. This notice is
+        # the whole basis on which a security reviewer approves --connect.
+        sys.stderr.write(plan.describe() + "\n\n")
+        if args.dry_run:
+            sys.stderr.write("--dry-run: nothing was started or contacted.\n")
+            return EXIT_OK
+        if not plan.targets:
+            sys.stderr.write("Nothing to contact.\n")
+        elif not args.yes and sys.stdin.isatty():
+            try:
+                if input("Proceed? [y/N] ").strip().lower() not in ("y", "yes"):
+                    sys.stderr.write("Declined. Re-run without --connect for a config-only inventory.\n")
+                    return EXIT_OK
+            except EOFError:
+                return EXIT_OK
+        if plan.targets:
+            def progress(server):
+                sys.stderr.write("  contacting {}...\n".format(server.key))
+            connect.execute(plan, contexts, timeout=args.timeout, progress=progress)
+            sys.stderr.write("\n")
 
     if args.format == "json":
-        output = json.dumps(jsonout.inventory_dict(inventory), indent=2) + "\n"
+        output = json.dumps(jsonout.inventory_dict(inventory, contexts), indent=2) + "\n"
     else:
-        output = text.render(inventory, TOOL_NAME) + "\n"
+        output = text.render(inventory, contexts, args.window, TOOL_NAME) + "\n"
 
     if args.out:
         Path(args.out).write_text(output, encoding="utf-8")

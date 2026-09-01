@@ -53,3 +53,41 @@ class TestTwoRun(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestVolatileDetailScrubbing(unittest.TestCase):
+    """Server stderr carries timestamps and pids that differ every run.
+
+    Found by the two-run test against a real npm-based server whose stderr names
+    a timestamped log file. Unscrubbed, it would read as permanent drift in M5.
+    """
+
+    def detail(self, raw):
+        from mcpdrift.model import Server
+
+        server = Server(name="x", client="c", scope="user", scope_detail=None, source_path="/p")
+        server.fetch_detail = raw
+        return server.safe_detail
+
+    def test_npm_log_timestamp_is_stable(self):
+        template = "npm error log at /Users/x/.npm/_logs/{}-debug-0.log"
+        first = self.detail(template.format("2026-09-01T02_14_49_622Z"))
+        second = self.detail(template.format("2026-09-01T02_14_58_045Z"))
+        self.assertEqual(first, second)
+        self.assertIn("<timestamp>", first)
+
+    def test_pid_and_temp_dir_are_stable(self):
+        self.assertEqual(self.detail("crash pid 4821"), self.detail("crash pid 991"))
+        self.assertEqual(
+            self.detail("wrote /var/folders/aa/bbb/T/x1"),
+            self.detail("wrote /var/folders/cc/ddd/T/x2"),
+        )
+
+    def test_home_directory_is_masked(self):
+        import os
+
+        home = os.path.expanduser("~")
+        self.assertNotIn(home, self.detail("failed reading {}/secrets".format(home)) or "")
+
+    def test_substantive_text_survives(self):
+        self.assertIn("command not found", self.detail("command not found: npx") or "")
