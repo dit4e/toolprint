@@ -8,12 +8,14 @@ a live one.
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import sys
 from pathlib import Path
 
 from . import TOOL_NAME, __version__, connect, context, discover, registry
-from .render import jsonout, text
+from .findings import engine, library
+from .render import findings_json, jsonout, text
 
 EXIT_OK = 0
 EXIT_FINDINGS = 1  # reserved for --fail-on in M2
@@ -51,6 +53,15 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--yes", action="store_true",
                       help="skip the confirmation prompt before contacting servers")
     scan.add_argument("--format", choices=["text", "json"], default="text")
+    scan.add_argument("--findings", metavar="PATH",
+                      help="write findings.json (the contract every renderer consumes)")
+    scan.add_argument("--fail-on", choices=library.SEVERITIES + ["none"], default="high",
+                      metavar="LEVEL",
+                      help="exit 1 when a finding at or above LEVEL is present "
+                           "(info|low|medium|high|critical|none; default high)")
+    scan.add_argument("--price-per-mtok", type=float, metavar="USD",
+                      help="price per million input tokens, to estimate cost per "
+                           "conversation; omitted rather than guessed by default")
     scan.add_argument("--out", metavar="PATH", help="write output to a file instead of stdout")
 
     sub.add_parser("clients", help="list the client config locations this build knows about")
@@ -89,16 +100,31 @@ def cmd_scan(args: argparse.Namespace) -> int:
             connect.execute(plan, contexts, timeout=args.timeout, progress=progress)
             sys.stderr.write("\n")
 
+    report = engine.analyse(inventory, contexts, args.window, args.price_per_mtok)
+
+    if args.findings:
+        generated_at = datetime.datetime.now(datetime.timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+        document = findings_json.build(inventory, report, generated_at)
+        Path(args.findings).write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+        sys.stderr.write("wrote {}\n".format(args.findings))
+
     if args.format == "json":
         output = json.dumps(jsonout.inventory_dict(inventory, contexts), indent=2) + "\n"
     else:
-        output = text.render(inventory, contexts, args.window, TOOL_NAME) + "\n"
+        output = text.render(inventory, contexts, args.window, TOOL_NAME, report) + "\n"
 
     if args.out:
         Path(args.out).write_text(output, encoding="utf-8")
         sys.stderr.write("wrote {}\n".format(args.out))
     else:
         sys.stdout.write(output)
+
+    if args.fail_on != "none":
+        triggered = [f for f in report.findings if library.at_or_above(f.severity, args.fail_on)]
+        if triggered:
+            sys.stderr.write("{} finding(s) at or above {}\n".format(len(triggered), args.fail_on))
+            return EXIT_FINDINGS
     return EXIT_OK
 
 

@@ -17,7 +17,17 @@ from typing import Dict, List, Optional, Sequence
 from .. import __version__, tokens
 from ..connect import context_cost
 from ..context import Context, all_shadowed
+from ..findings.engine import Report
+from ..findings.library import SEVERITY_ORDER
 from ..model import AUTH_LITERAL_SECRET, Inventory, Server
+
+SEVERITY_MARK = {
+    "critical": "[CRITICAL]",
+    "high": "[HIGH]    ",
+    "medium": "[MEDIUM]  ",
+    "low": "[LOW]     ",
+    "info": "[INFO]    ",
+}
 
 AUTH_LABEL = {
     "literal_secret": "literal-secret",
@@ -71,6 +81,7 @@ def render(
     contexts: Optional[Sequence[Context]] = None,
     window: int = 200000,
     tool_name: str = "mcpdrift",
+    report: Optional[Report] = None,
 ) -> str:
     out: List[str] = []
     add = out.append
@@ -90,11 +101,15 @@ def render(
     if connected and contexts:
         _render_cost(contexts, window, add)
 
+    if report is not None:
+        _render_findings(report, add)
+
     _render_inventory(inventory, servers, add)
     if contexts:
         _render_contexts(contexts, connected, add)
         _render_shadowed(contexts, add)
-    _render_credentials(servers, add)
+    if report is None:
+        _render_credentials(servers, add)
     if connected:
         _render_fetch_failures(servers, add)
         _render_method(servers, add)
@@ -123,6 +138,30 @@ def _render_cost(contexts: Sequence[Context], window: int, add) -> None:
     add("    A conversation loads exactly one context. This is the cost of the")
     add("    most expensive one, before you have typed anything.")
     add("")
+
+
+def _render_findings(report: Report, add) -> None:
+    if not report.findings:
+        add("  FINDINGS — none")
+        add("")
+        return
+    tally = _counts([f.severity for f in report.findings])
+    add("  FINDINGS — {}".format(tally))
+    add("")
+    for finding in report.findings:
+        add("  {} {}  {}".format(
+            SEVERITY_MARK.get(finding.severity, finding.severity), finding.id, finding.title))
+        add("      {}".format(finding.detail))
+        shown = finding.affected[:6]
+        for item in shown:
+            target = item["server"] + ("/" + item["tool"] if item["tool"] else "")
+            add("        - {}".format(target))
+        if len(finding.affected) > len(shown):
+            add("        ... and {} more".format(len(finding.affected) - len(shown)))
+        add("      fix: {}".format(finding.fix))
+        if finding.narrative:
+            add("      {}".format(finding.narrative))
+        add("")
 
 
 def _render_inventory(inventory: Inventory, servers: List[Server], add) -> None:
