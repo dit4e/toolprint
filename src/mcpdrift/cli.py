@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import json
 import sys
 from pathlib import Path
 
-from . import TOOL_NAME, __version__, connect, context, demo, discover, registry
+from . import TOOL_NAME, __version__, bundle, connect, context, demo, discover, registry
 from .findings import engine, library
 from .render import findings_json, html as html_render, jsonout, text
 
@@ -55,6 +56,11 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--format", choices=["text", "json"], default="text")
     scan.add_argument("--findings", metavar="PATH",
                       help="write findings.json (the contract every renderer consumes)")
+    scan.add_argument("--bundle", metavar="PATH",
+                      help="write a redacted bundle for assessment; allowlist redaction, "
+                           "no credential values, no paths (see mcp_collect.py)")
+    scan.add_argument("--anonymize", metavar="SALT",
+                      help="with --bundle, hash server names and hostnames using SALT")
     scan.add_argument("--html", metavar="PATH",
                       help="write a self-contained HTML report; opens offline, makes no "
                            "network requests, prints cleanly to PDF")
@@ -73,10 +79,27 @@ def build_parser() -> argparse.ArgumentParser:
         "viewer", help="write the empty HTML viewer; drop a findings.json onto it")
     viewer.add_argument("out", metavar="PATH")
 
+    kit = sub.add_parser(
+        "kit", help="write the standalone mcp_collect.py for a customer to run")
+    kit.add_argument("out", metavar="PATH")
+
     demo_cmd = sub.add_parser(
         "demo", help="write a demo report with synthetic findings, to show the output")
     demo_cmd.add_argument("out", metavar="PATH")
     return parser
+
+
+def kit_digest() -> str:
+    """SHA-256 of the vendored collection kit, recorded in every bundle.
+
+    The kit is copied into the package, never imported: the package having one
+    source of truth is a maintenance property, but the kit being a standalone
+    readable file is what gets it approved. Recording the hash is how a customer
+    confirms the script they were sent is the one that produced their bundle.
+    """
+    return hashlib.sha256(
+        Path(html_render.template_path()).parent.parent.joinpath(
+            "vendor", "mcp_collect.py").read_bytes()).hexdigest()
 
 
 def cmd_scan(args: argparse.Namespace) -> int:
@@ -112,6 +135,18 @@ def cmd_scan(args: argparse.Namespace) -> int:
             sys.stderr.write("\n")
 
     report = engine.analyse(inventory, contexts, args.window, args.price_per_mtok)
+
+    if args.bundle:
+        collected_at = datetime.datetime.now(datetime.timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+        document = bundle.build(
+            inventory, collected_at,
+            "connect" if not args.no_connect else "config_only",
+            salt=args.anonymize, kit_sha256=kit_digest())
+        Path(args.bundle).write_text(
+            json.dumps(document, indent=2) + "\n", encoding="utf-8")
+        sys.stderr.write(bundle.summarise(
+            document, args.bundle, Path(args.bundle).stat().st_size))
 
     if args.findings or args.html:
         generated_at = datetime.datetime.now(datetime.timezone.utc).strftime(
@@ -164,6 +199,11 @@ def main(argv=None) -> int:
             return cmd_scan(args)
         if args.command == "clients":
             return cmd_clients(args)
+        if args.command == "kit":
+            source = Path(html_render.template_path()).parent.parent / "vendor" / "mcp_collect.py"
+            Path(args.out).write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+            sys.stderr.write("wrote {} (sha256 {})\n".format(args.out, kit_digest()))
+            return EXIT_OK
         if args.command == "demo":
             Path(args.out).write_text(
                 html_render.embed(demo.document()), encoding="utf-8")
