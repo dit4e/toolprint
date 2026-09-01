@@ -14,8 +14,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mcpdrift import discover
-from mcpdrift.render import jsonout, text
+from toolprint import discover
+from toolprint.render import jsonout, text
 from tests.fixtures import build as fixture
 
 
@@ -63,7 +63,7 @@ class TestVolatileDetailScrubbing(unittest.TestCase):
     """
 
     def detail(self, raw):
-        from mcpdrift.model import Server
+        from toolprint.model import Server
 
         server = Server(name="x", client="c", scope="user", scope_detail=None, source_path="/p")
         server.fetch_detail = raw

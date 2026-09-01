@@ -82,7 +82,7 @@ def inventory_dict(
     connected = any(s.fetch_status != "not_attempted" for s in inventory.servers)
     return OrderedDict([
         ("schema_version", 0),  # 0 = pre-findings.json interim shape
-        ("generator", "mcpdrift/{}".format(__version__)),
+        ("generator", "toolprint/{}".format(__version__)),
         ("mode", "connect" if connected else "no_connect"),
         ("clients_found", inventory.clients_found),
         ("paths_scanned", inventory.paths_scanned),

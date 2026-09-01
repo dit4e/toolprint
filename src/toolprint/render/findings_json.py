@@ -116,7 +116,7 @@ def build(
     return OrderedDict([
         ("schema_version", SCHEMA_VERSION),
         ("generated_at", generated_at),
-        ("generator", "mcpdrift/{}".format(__version__)),
+        ("generator", "toolprint/{}".format(__version__)),
         ("heuristics_version", effects.HEURISTICS_VERSION),
         ("mode", report.summary["mode"]),
         ("summary", OrderedDict(sorted(report.summary.items()))),

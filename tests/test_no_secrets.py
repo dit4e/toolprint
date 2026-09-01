@@ -14,8 +14,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mcpdrift import discover
-from mcpdrift.render import jsonout, text
+from toolprint import discover
+from toolprint.render import jsonout, text
 from tests.fixtures import build as fixture
 
 # Raw fields exist on the model for M4's bundle redaction, but must never appear

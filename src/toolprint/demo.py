@@ -45,7 +45,7 @@ def document() -> Dict[str, Any]:
     return OrderedDict([
         ("schema_version", SCHEMA_VERSION),
         ("generated_at", "2026-08-31T09:00:00Z"),
-        ("generator", "mcpdrift/{} (demo)".format(__version__)),
+        ("generator", "toolprint/{} (demo)".format(__version__)),
         ("heuristics_version", effects.HEURISTICS_VERSION),
         ("mode", "connect"),
         ("summary", OrderedDict(sorted({

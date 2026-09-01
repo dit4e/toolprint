@@ -8,8 +8,8 @@ from __future__ import annotations
 import unittest
 from typing import Any, Dict, List
 
-from mcpdrift import protocol
-from mcpdrift.transport import TransportError
+from toolprint import protocol
+from toolprint.transport import TransportError
 
 
 class FakeTransport:

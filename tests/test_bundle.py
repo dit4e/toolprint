@@ -19,10 +19,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mcpdrift import bundle, discover
+from toolprint import bundle, discover
 from tests.fixtures import build as fixture
 
-KIT = Path(__file__).resolve().parent.parent / "src" / "mcpdrift" / "vendor" / "mcp_collect.py"
+KIT = Path(__file__).resolve().parent.parent / "src" / "toolprint" / "vendor" / "mcp_collect.py"
 LINE_BUDGET = 400
 
 
@@ -257,7 +257,7 @@ class TestDistribution(unittest.TestCase):
     """The kit is copied, never imported. These keep the copies honest."""
 
     def test_kit_command_emits_the_vendored_file_verbatim(self):
-        from mcpdrift import cli
+        from toolprint import cli
 
         tmp = Path(tempfile.mkdtemp())
         try:
@@ -267,7 +267,7 @@ class TestDistribution(unittest.TestCase):
             shutil.rmtree(tmp, ignore_errors=True)
 
     def test_recorded_digest_matches_the_shipped_kit(self):
-        from mcpdrift import cli
+        from toolprint import cli
 
         self.assertEqual(cli.kit_digest(),
                          hashlib.sha256(KIT.read_bytes()).hexdigest())

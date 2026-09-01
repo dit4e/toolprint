@@ -80,7 +80,7 @@ def render(
     inventory: Inventory,
     contexts: Optional[Sequence[Context]] = None,
     window: int = 200000,
-    tool_name: str = "mcpdrift",
+    tool_name: str = "toolprint",
     report: Optional[Report] = None,
 ) -> str:
     out: List[str] = []

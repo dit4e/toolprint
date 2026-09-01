@@ -7,8 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mcpdrift import discover
-from mcpdrift.model import (
+from toolprint import discover
+from toolprint.model import (
     AUTH_ENV_VAR, AUTH_HELPER_COMMAND, AUTH_LITERAL_SECRET, AUTH_NONE, AUTH_OAUTH,
 )
 from tests.fixtures import build as fixture

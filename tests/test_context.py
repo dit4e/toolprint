@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mcpdrift import connect, context, discover
+from toolprint import connect, context, discover
 from tests.fixtures import build as fixture
 
 

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import unittest
 
-from mcpdrift import auth
-from mcpdrift.model import (
+from toolprint import auth
+from toolprint.model import (
     AUTH_ENV_VAR, AUTH_HELPER_COMMAND, AUTH_LITERAL_SECRET, AUTH_NONE, AUTH_OAUTH,
 )
 
@@ -76,7 +76,7 @@ class TestPosture(unittest.TestCase):
         return auth.classify(**params)[0]
 
     def test_precedence_worst_first(self):
-        from mcpdrift.model import SecretLocation
+        from toolprint.model import SecretLocation
         secret = [SecretLocation("headers.Authorization", "x")]
         # A literal secret outranks every mechanism it might accompany.
         self.assertEqual(self.classify(secret_locations=secret, has_oauth=True), AUTH_LITERAL_SECRET)

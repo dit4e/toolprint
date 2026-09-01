@@ -3,7 +3,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mcpdrift"
+name = "toolprint"
 version = "0.1.0"
 description = "Offline, no-account MCP assessment: context cost, capability risk, and definition drift"
 requires-python = ">=3.9"
@@ -13,10 +13,10 @@ dependencies = []          # core is stdlib-only; this is a load-bearing claim, 
 tokens = ["tiktoken>=0.5"] # optional accuracy upgrade only; never auto-installed
 
 [project.scripts]
-mcpdrift = "mcpdrift.cli:main"
+toolprint = "toolprint.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-mcpdrift = ["viewer/*.html", "vendor/*.py"]
+toolprint = ["viewer/*.html", "vendor/*.py"]

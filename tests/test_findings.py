@@ -12,9 +12,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mcpdrift import connect, context, discover
-from mcpdrift.findings import engine, library
-from mcpdrift.render import findings_json
+from toolprint import connect, context, discover
+from toolprint.findings import engine, library
+from toolprint.render import findings_json
 from tests.fixtures import build as fixture
 
 READ_TOOL = {"name": "list_items", "description": "List items",
@@ -42,7 +42,7 @@ class EngineCase(unittest.TestCase):
 
     def give(self, key, tools):
         """Attach tools to a server as though --connect had retrieved them."""
-        from mcpdrift import tokens
+        from toolprint import tokens
 
         server = self.by_key[key]
         server.tools = tools
@@ -178,7 +178,7 @@ class TestFindingsJsonDeterminism(EngineCase):
         contexts = context.resolve_all(inv)
         for key, tools in [("claude_code/user/wide-open", [DELETE_TOOL, READ_TOOL]),
                            ("claude_code/user/user-remote", [SEND_TOOL, MISLABELLED_TOOL])]:
-            from mcpdrift import tokens
+            from toolprint import tokens
 
             server = {s.key: s for s in inv.servers}[key]
             server.tools = tools

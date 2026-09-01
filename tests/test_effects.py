@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import unittest
 
-from mcpdrift import effects
+from toolprint import effects
 
 
 def classify(name, annotations=None, schema=None):

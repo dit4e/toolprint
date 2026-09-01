@@ -10,8 +10,8 @@ import json
 import re
 import unittest
 
-from mcpdrift import demo
-from mcpdrift.render import html
+from toolprint import demo
+from toolprint.render import html
 
 # Anything that could reach the network or execute markup from the report.
 NETWORK_CALLS = re.compile(
