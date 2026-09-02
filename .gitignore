@@ -7,3 +7,8 @@ scratch/
 findings.json
 bundle*.json
 *.baseline.json
+
+# Planning and strategy documents. Kept on disk, never published: the source
+# specs state positioning, monetisation and what was deliberately not built.
+PLAN.md
+docs/spec-*.md

@@ -1,4 +1,4 @@
-"""Drift classification, per spec section 8. First match wins.
+"""Drift classification. Ten rules, checked in order; the first match wins.
 
 The ordering is the design. Rule 3 - description changed while schema did not -
 sits above the schema rules because it is the rug-pull signature: an attacker
@@ -126,7 +126,7 @@ def _classify_tool(server: str, name: str, old: Dict[str, Any], new: Dict[str, A
     old_effect, new_effect = old.get("effect"), new.get("effect")
     if old_effect in effects.RANK and new_effect in effects.RANK:
         if effects.RANK[new_effect] > effects.RANK[old_effect]:
-            # Rule 1 outranks rule 2 per spec section 8, and both are critical -
+            # Escalation outranks annotation revocation, and both are critical -
             # but a revoked annotation is usually the *cause* of the escalation,
             # and a report that hides the cause is harder to act on.
             because = _schema_delta(old, new)["breaking"]
@@ -144,8 +144,8 @@ def _classify_tool(server: str, name: str, old: Dict[str, Any], new: Dict[str, A
     description_changed = old.get("description_hash") != new.get("description_hash")
     schema_changed = old.get("schema_hash") != new.get("schema_hash")
 
-    # DELIBERATE DEVIATION from spec section 8, which orders 3 before 4 and 5.
-    # Taken literally, rules 4 and 5 are almost unreachable: text carrying a bidi
+    # The specific checks run before the general one, reversing the obvious
+    # order. Otherwise DRIFT-004 and DRIFT-005 are almost unreachable: text carrying a bidi
     # override or naming another server's tool has, by definition, also changed
     # its description, so rule 3 would always claim it first and the specific
     # explanation would never be printed. All three are HIGH, so nothing is

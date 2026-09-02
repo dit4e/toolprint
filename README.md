@@ -140,6 +140,13 @@ Python 3.9+. The core has no required dependencies. Without `tiktoken`, token
 counts use a character ratio calibrated against real tool definitions (4.55
 chars/token, ~4% median error), and the method used is recorded per server.
 
+## Why it reports what it reports
+
+[DESIGN.md](DESIGN.md) covers the decisions most likely to surprise you: why
+cost is per context, why annotations give a floor and a ceiling, why
+canonicalisation refuses to normalise Unicode, and why the drift rules are
+ordered as they are.
+
 ## Does drift actually happen?
 
 [dit4e/toolprint-watch](https://github.com/dit4e/toolprint-watch) checks 27

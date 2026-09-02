@@ -83,7 +83,7 @@ CLIENTS: List[Client] = [
                 # Verified present on macOS 2026-08-31 but carrying no mcpServers key;
                 # Desktop appears to have moved MCP to extensions/connectors. If that
                 # is confirmed, the fix is a new Source here, not new code.
-                note="may no longer hold MCP config; see PLAN.md 0.5",
+                note="verified 2026-08-31 as present but carrying no mcpServers key",
             ),
             Source(
                 HOME,

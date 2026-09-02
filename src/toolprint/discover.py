@@ -252,7 +252,8 @@ def collect(
     inventory = Inventory()
 
     if explicit_configs:
-        # Explicit --config disables auto-discovery, per spec section 5.
+        # Explicit --config disables auto-discovery: if you name the files,
+        # finding others would be surprising.
         for raw_path in explicit_configs:
             path = Path(os.path.expanduser(raw_path))
             inventory.paths_scanned.append(str(path))

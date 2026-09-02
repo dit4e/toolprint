@@ -212,7 +212,7 @@ def is_excepted(exceptions: Sequence[Dict[str, Any]], server: str, tool: Optiona
 
 
 # --------------------------------------------------------------------------
-# First-baseline safety checks (spec section 13)
+# First-baseline safety checks
 # --------------------------------------------------------------------------
 
 def first_baseline_objections(inventory: Inventory) -> List[str]:

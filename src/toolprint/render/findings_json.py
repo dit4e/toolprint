@@ -1,9 +1,9 @@
 """findings.json - the contract every renderer consumes.
 
-Per spec section 10, with one deliberate deviation: `summary` describes the
+One deliberate choice worth stating: `summary` describes the
 *heaviest context* rather than the machine-wide union, and a `contexts` array
 carries the rest. A conversation loads one client in one project, so the union
-has no reader; see PLAN.md section 8.
+has no reader - it describes no state the system is ever in.
 
 Sensitivity: this file contains tool names, descriptions and schemas and is as
 sensitive as a bundle. That is why the M3 viewer is client-side.

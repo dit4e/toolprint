@@ -1,6 +1,6 @@
 """Canonicalisation and hashing. This decides whether drift detection works.
 
-The pipeline, per spec section 7:
+The pipeline:
 
     strip transport noise -> drop null-valued optional keys -> sort known-unordered
     arrays -> RFC 8785 (JCS) -> SHA-256

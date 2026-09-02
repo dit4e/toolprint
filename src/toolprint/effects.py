@@ -1,6 +1,6 @@
 """Effect-class inference: what a tool can actually do to the world.
 
-Three independent signals, per spec section 9. The highest class any of them
+Three independent signals. The highest class any of them
 produces wins, and annotations alone never downgrade a classification - a server
 asserting readOnlyHint on a tool called delete_account is making a claim, not
 providing evidence.
