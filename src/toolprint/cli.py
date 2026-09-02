@@ -321,9 +321,14 @@ def cmd_check(args: argparse.Namespace) -> int:
         return EXIT_OK
 
     active, expired = baseline_mod.active_exceptions(document)
-    changes = drift.compare(document, baseline_mod.snapshot(inventory),
-                            _live_tools(inventory), active)
+    current = baseline_mod.snapshot(inventory)
+    changes = drift.compare(document, current, _live_tools(inventory), active)
     report = engine.analyse(inventory, contexts)
+    # Membership changes are not drift - nobody's definitions moved - but they
+    # must be visible, because an unbaselined server is being watched against
+    # nothing at all.
+    new_servers = sorted(set(current) - set(document.get("servers") or {}))
+    gone_servers = baseline_mod.dropped(document, current)
 
     if args.findings or args.html:
         generated_at = datetime.datetime.now(datetime.timezone.utc).strftime(
@@ -343,10 +348,13 @@ def cmd_check(args: argparse.Namespace) -> int:
         output = json.dumps({
             "baseline": args.baseline,
             "changes": [_change_dict(c) for c in changes],
+            "new_servers": new_servers,
+            "unwatched_or_unreachable": gone_servers,
             "expired_exceptions": expired,
         }, indent=2) + "\n"
     else:
-        output = _render_changes(changes, expired, args.baseline) + "\n"
+        output = _render_changes(changes, expired, args.baseline,
+                                 new_servers, gone_servers) + "\n"
 
     if args.out:
         Path(args.out).write_text(output, encoding="utf-8")
@@ -377,7 +385,7 @@ def cmd_approve(args: argparse.Namespace) -> int:
     current = baseline_mod.snapshot(inventory)
     active, _ = baseline_mod.active_exceptions(document)
     changes = drift.compare(document, current, _live_tools(inventory), active)
-    if not changes:
+    if not changes and not baseline_mod.adopt_new(dict(document), current):
         sys.stderr.write("Nothing to approve: no drift against {}.\n".format(args.baseline))
         return EXIT_OK
 
@@ -428,11 +436,15 @@ def cmd_approve(args: argparse.Namespace) -> int:
         if not outstanding and identity in current:
             document["servers"][identity]["toolset_hash"] = current[identity]["toolset_hash"]
 
+    adopted = baseline_mod.adopt_new(document, current, stamp)
     document["approved_at"] = stamp
     document["approved_by"] = args.by
     baseline_mod.save(args.baseline, document)
     sys.stderr.write("approved {} of {} change(s) into {}\n".format(
         len(approved), len(changes), args.baseline))
+    if adopted:
+        sys.stderr.write("  adopted {} newly watched server(s): {}\n".format(
+            len(adopted), ", ".join(a.split("@")[0] for a in adopted[:6])))
     if skipped:
         sys.stderr.write("  {} change(s) left unapproved and still reported\n".format(
             len(skipped)))
@@ -448,14 +460,14 @@ def _change_dict(change) -> dict:
     }
 
 
-def _render_changes(changes, expired, path: str) -> str:
+def _render_changes(changes, expired, path: str, new_servers=(), gone_servers=()) -> str:
     lines = ["{} {} — drift against {}".format(TOOL_NAME, __version__, path), ""]
     if not changes:
+        # No early return. The informational sections below matter most on a
+        # quiet day: a server being watched against nothing looks exactly like a
+        # server that has not changed, and only one of those is fine.
         lines.append("  No drift. The tool surface matches the approved baseline.")
-        if expired:
-            lines.append("")
-        else:
-            return "\n".join(lines)
+        lines.append("")
     live = [c for c in changes if not c.excepted]
     if changes:
         tally: dict = {}
@@ -479,6 +491,19 @@ def _render_changes(changes, expired, path: str) -> str:
                 lines.append("      fix: {}".format(
                     drift.REMEDIATION.get(change.rule, "").split(". ")[0] + "."))
             lines.append("")
+    if new_servers:
+        lines.append("  {} server(s) newly watched, not yet in the baseline:".format(
+            len(new_servers)))
+        for identity in new_servers:
+            lines.append("    {}".format(identity))
+        lines.append("    Run `approve` to adopt them; until then they are compared")
+        lines.append("    against nothing.")
+        lines.append("")
+    if gone_servers:
+        lines.append("  {} baselined server(s) not seen in this run:".format(len(gone_servers)))
+        for identity in gone_servers:
+            lines.append("    {}".format(identity))
+        lines.append("")
     if expired:
         lines.append("  {} exception(s) expired and no longer suppress anything:".format(
             len(expired)))

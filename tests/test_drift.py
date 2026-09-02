@@ -356,3 +356,89 @@ class TestShadowingFalsePositives(unittest.TestCase):
         self.assertEqual(lexical.shadowing({
             "one": [{"name": "contact_delete", "description": "Delete"},
                     {"name": "helper", "description": "Wraps contact_delete"}]}), [])
+
+
+class TestWatchlistGrowth(unittest.TestCase):
+    """Adding a server to the watchlist mid-run must record it.
+
+    A new server produces no drift - correctly, nothing moved - which meant it
+    never entered the baseline and was compared against nothing indefinitely,
+    while still counting toward the denominator.
+    """
+
+    def setUp(self):
+        self.document = {"baseline_version": 1, "servers": snapshot_of([tool("a")]),
+                         "exceptions": []}
+        self.grown = dict(snapshot_of([tool("a")]),
+                          **snapshot_of([tool("b")], identity="new@stdio:npx"))
+
+    def test_a_new_server_produces_no_drift(self):
+        self.assertEqual(drift.compare(self.document, self.grown), [])
+
+    def test_adopt_new_records_it_with_a_first_observed_date(self):
+        added = bl.adopt_new(self.document, self.grown, "2026-09-08T00:00:00Z")
+        self.assertEqual(added, ["new@stdio:npx"])
+        record = self.document["servers"]["new@stdio:npx"]
+        self.assertEqual(record["first_observed"], "2026-09-08T00:00:00Z")
+
+    def test_adoption_does_not_disturb_existing_servers(self):
+        before = json.loads(json.dumps(self.document["servers"]["s@stdio:npx"]))
+        bl.adopt_new(self.document, self.grown)
+        self.assertEqual(self.document["servers"]["s@stdio:npx"], before)
+
+    def test_adoption_is_idempotent(self):
+        bl.adopt_new(self.document, self.grown, "2026-09-08T00:00:00Z")
+        self.assertEqual(bl.adopt_new(self.document, self.grown, "2026-10-01T00:00:00Z"), [])
+        self.assertEqual(self.document["servers"]["new@stdio:npx"]["first_observed"],
+                         "2026-09-08T00:00:00Z")
+
+    def test_a_server_dropped_from_the_watchlist_is_reported_not_deleted(self):
+        shrunk = {}
+        self.assertEqual(bl.dropped(self.document, shrunk), ["s@stdio:npx"])
+        # Still present: removing it silently would erase its history.
+        self.assertIn("s@stdio:npx", self.document["servers"])
+
+    def test_dropping_a_server_produces_no_drift(self):
+        self.assertEqual(drift.compare(self.document, {}), [])
+
+    def test_build_stamps_first_observed(self):
+        from toolprint.model import Inventory, Server
+
+        server = Server(name="s", client="c", scope="user", scope_detail=None,
+                        source_path="/p", transport="stdio", command="npx")
+        server.fetch_status, server.tools = "ok", [tool("a")]
+        document = bl.build(Inventory(servers=[server]))
+        for record in document["servers"].values():
+            self.assertEqual(record["first_observed"], document["created_at"])
+
+
+class TestCheckOutput(unittest.TestCase):
+    """The quiet-day path is the one that must still say things."""
+
+    def render(self, **kw):
+        from toolprint import cli
+
+        return cli._render_changes(kw.get("changes", []), kw.get("expired", []),
+                                   "b.json", kw.get("new_servers", ()),
+                                   kw.get("gone_servers", ()))
+
+    def test_new_servers_are_reported_even_with_no_drift(self):
+        # A server watched against nothing looks exactly like a server that has
+        # not changed. Only one of those is fine.
+        out = self.render(new_servers=["new@stdio:npx"])
+        self.assertIn("No drift", out)
+        self.assertIn("new@stdio:npx", out)
+        self.assertIn("not yet in the baseline", out)
+
+    def test_dropped_servers_are_reported_with_no_drift(self):
+        out = self.render(gone_servers=["gone@stdio:npx"])
+        self.assertIn("gone@stdio:npx", out)
+
+    def test_expired_exceptions_are_reported_with_no_drift(self):
+        out = self.render(expired=[{"rule": "DRIFT-003", "server": "s", "expires": "2000-01-01"}])
+        self.assertIn("expired", out)
+
+    def test_a_genuinely_quiet_run_says_so_and_little_else(self):
+        out = self.render()
+        self.assertIn("No drift", out)
+        self.assertNotIn("not yet in the baseline", out)

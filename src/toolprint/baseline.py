@@ -119,8 +119,45 @@ def build(inventory: Inventory, approved_by: Optional[str] = None,
         ("approved_by", approved_by),
         ("note", note),
         ("exceptions", []),
-        ("servers", snapshot(inventory)),
+        ("servers", _stamp_first_observed(snapshot(inventory), stamp)),
     ])
+
+
+def _stamp_first_observed(servers: Dict[str, Any], stamp: str) -> Dict[str, Any]:
+    """Record when each server entered the watch.
+
+    Without this, a server added in week six looks like it had six quiet weeks.
+    Any rate computed across the whole file would then be wrong in the direction
+    that flatters the result, which is the worst direction for it to be wrong in.
+    """
+    for record in servers.values():
+        record.setdefault("first_observed", stamp)
+    return servers
+
+
+def adopt_new(document: Dict[str, Any], current: Dict[str, Any],
+              stamp: Optional[str] = None) -> List[str]:
+    """Add servers that are being watched but were never baselined.
+
+    Adding a server to the watchlist is an intentional act, not drift, so it
+    produces no change to approve - which meant it never entered the baseline and
+    was compared against nothing, indefinitely.
+    """
+    stamp = stamp or now()
+    stored = document.setdefault("servers", {})
+    added = []
+    for identity in sorted(current):
+        if identity not in stored:
+            record = json.loads(json.dumps(current[identity]))
+            record["first_observed"] = stamp
+            stored[identity] = record
+            added.append(identity)
+    return added
+
+
+def dropped(document: Dict[str, Any], current: Dict[str, Any]) -> List[str]:
+    """Baselined servers no longer being watched or no longer reachable."""
+    return sorted(set(document.get("servers") or {}) - set(current))
 
 
 def load(path: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
