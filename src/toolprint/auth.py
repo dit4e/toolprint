@@ -116,6 +116,15 @@ def looks_like_secret(value: object, credential_field: bool) -> Optional[str]:
     if not isinstance(value, str) or not value.strip():
         return None
     stripped = value.strip()
+
+    # A prefix in front of a ${VAR} reference is hygienic, not a secret. Slack
+    # tokens are configured as "xoxb-${SLACK_TOKEN}", and flagging that as a
+    # plaintext credential is a false accusation about a config that is doing
+    # exactly the right thing. Checked before the prefix rule, which would
+    # otherwise match on "xoxb-" alone.
+    if has_env_reference(stripped) and len(_residue(stripped)) < MIN_SECRET_RESIDUE:
+        return None
+
     if _has_issuer_prefix(stripped):
         return "value begins with a recognised credential prefix"
     if credential_field and len(_residue(stripped)) >= MIN_SECRET_RESIDUE:

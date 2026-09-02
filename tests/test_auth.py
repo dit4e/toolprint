@@ -94,3 +94,26 @@ class TestPosture(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPrefixedReferences(unittest.TestCase):
+    """A credential prefix in front of a ${VAR} is a correct config, not a leak.
+
+    Found by pointing toolprint at its own watchlist: "xoxb-${WATCH_PLACEHOLDER}"
+    was reported as a plaintext credential, which is a false accusation about a
+    config doing exactly the right thing.
+    """
+
+    def test_prefix_plus_reference_is_hygienic(self):
+        for value in ("xoxb-${SLACK_TOKEN}", "fc-${FIRECRAWL_KEY}",
+                      "tvly-${TAVILY_KEY}", "sk-${OPENAI_KEY}",
+                      "Bearer ghp_${GH_TOKEN}"):
+            self.assertIsNone(auth.looks_like_secret(value, True), value)
+
+    def test_a_real_token_beside_a_reference_is_still_flagged(self):
+        # Residue long enough to be a credential in its own right.
+        self.assertIsNotNone(
+            auth.looks_like_secret("ghp_" + "A" * 36 + "${SUFFIX}", True))
+
+    def test_bare_prefix_with_a_real_body_is_still_flagged(self):
+        self.assertIsNotNone(auth.looks_like_secret("xoxb-" + "A" * 30, True))
