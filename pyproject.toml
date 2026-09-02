@@ -5,9 +5,39 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "toolprint"
 version = "0.1.0"
-description = "Offline, no-account MCP assessment: context cost, capability risk, and definition drift"
+description = "What your agent's tool surface costs, and what it can do. Offline MCP assessment: context cost, capability risk, and definition drift."
+readme = "README.md"
 requires-python = ">=3.9"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Keith Foster" }]
+keywords = ["mcp", "model-context-protocol", "security", "ai-agents", "llm",
+            "drift-detection", "sarif", "context-window", "supply-chain"]
 dependencies = []          # core is stdlib-only; this is a load-bearing claim, not an accident
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: System :: Monitoring",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/dit4e/toolprint"
+Repository = "https://github.com/dit4e/toolprint"
+Issues = "https://github.com/dit4e/toolprint/issues"
+"Drift dataset" = "https://github.com/dit4e/toolprint-watch"
 
 [project.optional-dependencies]
 tokens = ["tiktoken>=0.5"] # optional accuracy upgrade only; never auto-installed
@@ -19,4 +49,4 @@ toolprint = "toolprint.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-toolprint = ["viewer/*.html", "vendor/*.py"]
+toolprint = ["viewer/*.html", "vendor/*.py", "py.typed"]
