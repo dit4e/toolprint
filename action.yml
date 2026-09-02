@@ -56,9 +56,16 @@ runs:
 
     - name: Install toolprint
       shell: bash
+      # Inputs reach the shell through env, never through ${{ }} interpolation.
+      # A caller may legitimately wire an untrusted value - a pull request title,
+      # an issue body - into an input, and an interpolated expression is
+      # substituted into the script before bash ever sees it, so quoting cannot
+      # save it. Via env it is data.
+      env:
+        VERSION: ${{ inputs.version }}
       run: |
-        if [ -n "${{ inputs.version }}" ]; then
-          python -m pip install --quiet "toolprint[tokens]==${{ inputs.version }}"
+        if [ -n "$VERSION" ]; then
+          python -m pip install --quiet "toolprint[tokens]==$VERSION"
         else
           python -m pip install --quiet "toolprint[tokens]"
         fi
@@ -66,18 +73,24 @@ runs:
     - name: Run toolprint
       id: run
       shell: bash
+      env:
+        MODE: ${{ inputs.mode }}
+        BASELINE: ${{ inputs.baseline }}
+        FAIL_ON: ${{ inputs.fail-on }}
+        CONNECT: ${{ inputs.connect }}
+        SARIF_FILE: ${{ inputs.sarif-file }}
       run: |
         set +e
-        ARGS=(--format sarif --out "${{ inputs.sarif-file }}" --fail-on "${{ inputs.fail-on }}" --yes)
-        if [ "${{ inputs.connect }}" = "true" ]; then ARGS+=(--connect); fi
-        if [ "${{ inputs.mode }}" = "check" ]; then
-          toolprint check --baseline "${{ inputs.baseline }}" "${ARGS[@]}"
+        ARGS=(--format sarif --out "$SARIF_FILE" --fail-on "$FAIL_ON" --yes)
+        if [ "$CONNECT" = "true" ]; then ARGS+=(--connect); fi
+        if [ "$MODE" = "check" ]; then
+          toolprint check --baseline "$BASELINE" "${ARGS[@]}"
         else
           toolprint scan --project "$GITHUB_WORKSPACE" "${ARGS[@]}"
         fi
         CODE=$?
         set -e
-        echo "sarif-file=${{ inputs.sarif-file }}" >> "$GITHUB_OUTPUT"
+        echo "sarif-file=$SARIF_FILE" >> "$GITHUB_OUTPUT"
         echo "exit-code=$CODE" >> "$GITHUB_OUTPUT"
         # Do not fail here: the workflow should upload the SARIF first, then
         # decide. A job that dies before upload produces no annotations, which
