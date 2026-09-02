@@ -15,6 +15,15 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+# Credential shapes to strip from server output even when this tool never held
+# the value: a token the server fetched for itself, or one already in the
+# ambient environment. The exact-value pass above is the reliable one; this only
+# catches what that cannot see.
+_SECRET_SHAPED = re.compile(
+    r"\b(?:sk-[A-Za-z0-9_\-]{16,}|gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,}"
+    r"|xox[bapsr]-[A-Za-z0-9-]{10,}|glpat-[A-Za-z0-9_\-]{16,}|AKIA[0-9A-Z]{16}"
+    r"|AIza[0-9A-Za-z_\-]{30,}|eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,})")
+
 # Fragments of server stderr that change between otherwise identical runs.
 _VOLATILE = (
     # ISO-8601-ish timestamps, including npm's filename-safe underscore form.
@@ -125,10 +134,43 @@ class Server:
         """
         if not self.fetch_detail:
             return None
-        detail = self.fetch_detail.replace(os.path.expanduser("~"), "~")
+        detail = self.redact_credentials(self.fetch_detail)
+        detail = detail.replace(os.path.expanduser("~"), "~")
         for pattern, replacement in _VOLATILE:
             detail = pattern.sub(replacement, detail)
         return detail[:200]
+
+    def redact_credentials(self, text: str) -> str:
+        """Remove this server's own credentials from text it produced.
+
+        Servers quote their configuration in startup errors - "could not
+        authenticate with key=..." is an ordinary thing for one to print - and
+        that text lands in fetch_detail, which is written to findings.json and
+        to a watchlist observation that may be committed to a public repository.
+
+        The redaction is exact rather than heuristic: these are the values this
+        process passed to that server, both as written and as expanded, so there
+        is no guessing about what a secret looks like. A pattern backstop
+        follows for credentials the tool never saw - one the server fetched for
+        itself, or one inherited from the ambient environment.
+        """
+        from .transport import expand
+
+        for name, raw in list(self.raw_env.items()) + list(self.raw_headers.items()):
+            if not isinstance(raw, str):
+                continue
+            candidates = {raw}
+            try:
+                candidates.add(expand(raw))
+            except Exception:
+                pass
+            for candidate in candidates:
+                stripped = candidate.strip()
+                # Short values are words, not secrets, and blind-replacing them
+                # would mangle the message it is trying to keep readable.
+                if len(stripped) >= 8 and stripped in text:
+                    text = text.replace(stripped, "<redacted:{}>".format(name))
+        return _SECRET_SHAPED.sub("<redacted>", text)
 
     @property
     def key(self) -> str:
