@@ -177,10 +177,15 @@ def shadowing(tools_by_server: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str
     hijack the rest of the time.
     """
     owners: Dict[str, str] = {}
+    own_names: Dict[str, set] = {}
     for server, tools in tools_by_server.items():
+        own_names[server] = set()
         for tool in tools:
             name = tool.get("name")
-            if isinstance(name, str) and is_distinctive(name) and name not in owners:
+            if not isinstance(name, str):
+                continue
+            own_names[server].add(name)
+            if is_distinctive(name) and name not in owners:
                 owners[name] = server
 
     found: List[Dict[str, Any]] = []
@@ -191,6 +196,14 @@ def shadowing(tools_by_server: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str
                 continue
             for other_name in sorted(owners):
                 if owners[other_name] == server or other_name == tool.get("name"):
+                    continue
+                # A server describing a tool it also implements is not reaching
+                # across a boundary. Tool names recur legitimately - Sentry and
+                # GitHub both ship `search_issues` - and ownership here is just
+                # "whichever server was seen first", so without this the second
+                # one is accused of shadowing the first for describing its own
+                # feature.
+                if other_name in own_names.get(server, ()):
                     continue
                 if re.search(r"\b{}\b".format(re.escape(other_name)), text):
                     found.append({
