@@ -1,4 +1,4 @@
-name: release
+name: workflow
 
 # Publishes to PyPI via Trusted Publishing (OIDC). There is no API token stored
 # anywhere: PyPI verifies the identity of this workflow, in this repository, in
