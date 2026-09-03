@@ -1,0 +1,65 @@
+name: release
+
+# Publishes to PyPI via Trusted Publishing (OIDC). There is no API token stored
+# anywhere: PyPI verifies the identity of this workflow, in this repository, in
+# this environment, and issues a short-lived credential for that one upload.
+#
+# Triggered by publishing a GitHub Release, so the tag is the source of truth
+# and a release is a deliberate act rather than a side effect of pushing.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --quiet build twine
+          python -m build
+          python -m twine check dist/*
+
+      - name: The version must match the tag
+        # A release tagged v0.2.0 that ships 0.1.0 is unrecoverable: PyPI never
+        # allows a version to be re-uploaded, even after deletion.
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "pyproject: $VERSION   tag: $TAG"
+          test "v$VERSION" = "$TAG"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # Named environment, so PyPI can scope the trusted publisher to it and the
+    # repository can require approval before an upload ever happens.
+    environment:
+      name: pypi
+      url: https://pypi.org/p/toolprint
+    permissions:
+      id-token: write   # the OIDC token PyPI verifies; nothing else is needed
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      # Pinned to a commit, as this project's own documentation recommends.
+      - uses: pypa/gh-action-pypi-publish@a892a5a61159132606e93a2fa6f4358831b04d26  # v1.14.2
