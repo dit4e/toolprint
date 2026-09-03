@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -478,14 +479,12 @@ class TestPlatformDependentDescriptions(unittest.TestCase):
     """
 
     def test_baseline_records_the_platform(self):
-        import sys as _sys
-
         from toolprint.model import Inventory, Server
 
         server = Server(name="s", client="c", scope="user", scope_detail=None,
                         source_path="/p", transport="stdio", command="npx")
         server.fetch_status, server.tools = "ok", [tool("a")]
-        self.assertEqual(bl.build(Inventory(servers=[server]))["platform"], _sys.platform)
+        self.assertEqual(bl.build(Inventory(servers=[server]))["platform"], sys.platform)
 
     def test_platform_change_is_surfaced_not_suppressed(self):
         """The finding still fires; it is annotated, not hidden.
@@ -495,17 +494,17 @@ class TestPlatformDependentDescriptions(unittest.TestCase):
         """
         from toolprint import cli
 
+        # A platform that is definitely not the one running the test.
+        other = "sunos5" if sys.platform != "sunos5" else "darwin"
         out = cli._render_changes(
             compare([tool("f", "Running on macOS")], [tool("f", "Running on Linux")]),
-            [], "b.json", (), (), "darwin")
+            [], "b.json", (), (), other)
         self.assertIn("DRIFT-003", out)
-        self.assertIn("Baseline recorded on darwin", out)
+        self.assertIn("Baseline recorded on {}".format(other), out)
         self.assertIn("may reflect the platform", out)
 
     def test_no_note_when_platforms_match(self):
-        import sys as _sys
-
         from toolprint import cli
 
-        out = cli._render_changes([], [], "b.json", (), (), _sys.platform)
+        out = cli._render_changes([], [], "b.json", (), (), sys.platform)
         self.assertNotIn("may reflect the platform", out)
