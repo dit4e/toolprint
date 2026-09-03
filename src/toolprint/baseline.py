@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import sys
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -115,6 +116,12 @@ def build(inventory: Inventory, approved_by: Optional[str] = None,
         # event, not a finding.
         ("heuristics_version", effects.HEURISTICS_VERSION),
         ("created_at", stamp),
+        # Some servers describe themselves differently per platform:
+        # desktop-commander's start_process embeds "Running on macOS. Default
+        # shell: zsh." and a block of OS-specific advice. Baseline on a laptop,
+        # check in Linux CI, and the description hash differs forever - firing
+        # DRIFT-003, the rug-pull rule, which is the worst one to cry wolf on.
+        ("platform", sys.platform),
         ("approved_at", stamp),
         ("approved_by", approved_by),
         ("note", note),

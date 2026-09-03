@@ -99,6 +99,21 @@ specific explanation would never print. All are the same severity, so nothing is
 under-reported — the reader gets "invisible characters appeared" instead of "the
 text changed", which is the difference between a finding and a diff.
 
+## Baselines record the platform they were taken on
+
+Some servers describe themselves differently depending on where they run.
+`desktop-commander`'s `start_process` embeds *"Running on macOS. Default shell:
+zsh."* and a block of OS-specific advice. Baseline that on a laptop, check it in
+Linux CI, and the description hash differs forever — firing `DRIFT-003`, the
+rug-pull rule, which is the worst one to cry wolf on.
+
+The baseline records `sys.platform`, and a check from a different one says so.
+The finding is **annotated, not suppressed**: a description rewritten on another
+platform could still be a real attack, and hiding it would trade one failure
+mode for a worse one.
+
+The practical advice is simpler: baseline in the environment you check from.
+
 ## Exceptions require a reason and an expiry
 
 A suppression that cannot lapse becomes permanent by neglect, and then nobody

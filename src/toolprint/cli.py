@@ -320,6 +320,15 @@ def cmd_check(args: argparse.Namespace) -> int:
     if not proceeded:
         return EXIT_OK
 
+    recorded_platform = document.get("platform")
+    if recorded_platform and recorded_platform != sys.platform:
+        sys.stderr.write(
+            "Note: this baseline was recorded on {!r} and you are checking on {!r}.\n"
+            "Some servers describe themselves differently per platform, so a\n"
+            "description-only change (DRIFT-003) may be environmental rather than\n"
+            "real. Baseline in the environment you check from.\n\n".format(
+                recorded_platform, sys.platform))
+
     active, expired = baseline_mod.active_exceptions(document)
     current = baseline_mod.snapshot(inventory)
     changes = drift.compare(document, current, _live_tools(inventory), active)
@@ -354,7 +363,8 @@ def cmd_check(args: argparse.Namespace) -> int:
         }, indent=2) + "\n"
     else:
         output = _render_changes(changes, expired, args.baseline,
-                                 new_servers, gone_servers) + "\n"
+                                 new_servers, gone_servers,
+                                 recorded_platform) + "\n"
 
     if args.out:
         Path(args.out).write_text(output, encoding="utf-8")
@@ -460,8 +470,14 @@ def _change_dict(change) -> dict:
     }
 
 
-def _render_changes(changes, expired, path: str, new_servers=(), gone_servers=()) -> str:
+def _render_changes(changes, expired, path: str, new_servers=(), gone_servers=(),
+                    recorded_platform=None) -> str:
     lines = ["{} {} — drift against {}".format(TOOL_NAME, __version__, path), ""]
+    if recorded_platform and recorded_platform != sys.platform:
+        lines.append("  Baseline recorded on {}; checking on {}. A description-only".format(
+            recorded_platform, sys.platform))
+        lines.append("  change may reflect the platform rather than the server.")
+        lines.append("")
     if not changes:
         # No early return. The informational sections below matter most on a
         # quiet day: a server being watched against nothing looks exactly like a
