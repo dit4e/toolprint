@@ -62,4 +62,7 @@ jobs:
           name: dist
           path: dist/
       # Pinned to a commit, as this project's own documentation recommends.
-      - uses: pypa/gh-action-pypi-publish@a892a5a61159132606e93a2fa6f4358831b04d26  # v1.14.2
+      # Note this is the COMMIT the tag points to, not the annotated tag object's
+      # own SHA - they differ, and this action resolves its container image by
+      # the ref you pin, so the wrong one fails with "manifest unknown".
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
