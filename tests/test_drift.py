@@ -508,3 +508,57 @@ class TestPlatformDependentDescriptions(unittest.TestCase):
 
         out = cli._render_changes([], [], "b.json", (), (), sys.platform)
         self.assertNotIn("may reflect the platform", out)
+
+
+class TestServerVersionCapture(unittest.TestCase):
+    """`npx -y pkg` does not mean latest.
+
+    A local cache held a March 2025 build while a clean runner fetched the
+    August 2026 release of the same unpinned spec, and nothing reported the
+    difference. The version a server states on the wire is the only reliable
+    answer to "what is actually running here".
+    """
+
+    def test_reads_modern_meta_and_legacy_handshake(self):
+        from toolprint import protocol
+
+        modern = {"result": {"_meta": {"io.modelcontextprotocol/serverInfo":
+                                       {"name": "Context7", "version": "4.0.4"}}}}
+        legacy = {"result": {"serverInfo": {"name": "mcp-time", "version": "1.29.1"}}}
+        self.assertEqual(protocol.server_info(modern)["version"], "4.0.4")
+        self.assertEqual(protocol.server_info(legacy)["version"], "1.29.1")
+
+    def test_absent_identity_is_none_not_an_error(self):
+        from toolprint import protocol
+
+        for message in ({}, {"result": {}}, {"error": {"code": -1}}, {"result": "text"}):
+            self.assertIsNone(protocol.server_info(message))
+
+    def test_pinning_detection(self):
+        from toolprint.discover import version_is_pinned
+
+        for args, pinned in [
+            (["-y", "@modelcontextprotocol/server-filesystem", "/tmp"], False),
+            (["-y", "@agentdeskai/browser-tools-mcp@2.0.2"], True),
+            (["-y", "@upstash/context7-mcp@latest"], False),   # a tag, not a version
+            (["mcp-server-time"], False),
+            (["mcp-server-time==1.29.1"], True),
+            (["--from", "mcp-server-git==2026.8.18", "mcp-server-git"], True),
+        ]:
+            self.assertEqual(version_is_pinned(args), pinned, " ".join(args))
+
+    def test_a_path_argument_is_not_mistaken_for_a_version(self):
+        from toolprint.discover import version_is_pinned
+
+        self.assertFalse(version_is_pinned(["-y", "server-filesystem", "/Users/x/dir"]))
+
+    def test_baseline_records_the_running_version(self):
+        from toolprint.model import Inventory, Server
+
+        server = Server(name="s", client="c", scope="user", scope_detail=None,
+                        source_path="/p", transport="stdio", command="npx")
+        server.fetch_status, server.tools = "ok", [tool("a")]
+        server.server_version, server.version_pinned = "1.2.1", False
+        record = bl.build(Inventory(servers=[server]))["servers"]["s@stdio:npx"]
+        self.assertEqual(record["server_version"], "1.2.1")
+        self.assertFalse(record["version_pinned"])

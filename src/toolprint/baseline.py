@@ -96,6 +96,11 @@ def snapshot(inventory: Inventory) -> Dict[str, Any]:
         record = OrderedDict(sorted(canonical.hash_server(server.tools).items()))
         record["transport"] = server.transport
         record["auth_method"] = server.auth_method
+        # Recorded so a drift finding can name the release that caused it:
+        # "escalated from read to write (1.2.1 -> 2.0.2)" is actionable in a way
+        # that "escalated from read to write" is not.
+        record["server_version"] = server.server_version
+        record["version_pinned"] = server.version_pinned
         record["tools"] = tools
         servers[identity] = record
     return OrderedDict(sorted(servers.items()))

@@ -73,6 +73,25 @@ def meta(version: str = PROTOCOL_VERSION) -> Dict[str, Any]:
     }
 
 
+def server_info(message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The server's self-reported identity, wherever this revision puts it.
+
+    2026-07-28 carries it in every result's _meta; the initialize-based
+    revisions return it once from the handshake. Both are checked because a
+    single deployment routinely spans several revisions.
+    """
+    result = message.get("result")
+    if not isinstance(result, dict):
+        return None
+    meta = result.get("_meta")
+    if isinstance(meta, dict):
+        info = meta.get("io.modelcontextprotocol/serverInfo")
+        if isinstance(info, dict):
+            return info
+    info = result.get("serverInfo")
+    return info if isinstance(info, dict) else None
+
+
 def _looks_like_jsonrpc(message: Dict[str, Any]) -> bool:
     return "jsonrpc" in message or "result" in message or "error" in message
 
@@ -84,12 +103,19 @@ def _error_code(message: Dict[str, Any]) -> Optional[int]:
     return None
 
 
-def negotiate(transport: Transport, timeout: float) -> Tuple[str, str]:
-    """Return (era, protocol_version). Raises TransportError if unreachable."""
+def negotiate(transport: Transport, timeout: float,
+              probe_out: Optional[Dict[str, Any]] = None) -> Tuple[str, str]:
+    """Return (era, protocol_version). Raises TransportError if unreachable.
+
+    `probe_out`, when given, receives the discovery response so the caller can
+    read the server's identity from it without a second round trip.
+    """
     try:
         message = transport.request("server/discover", meta(), timeout)
     except TransportError:
         raise
+    if probe_out is not None:
+        probe_out.update(message)
 
     result = message.get("result")
     if isinstance(result, dict):
@@ -126,7 +152,8 @@ def negotiate(transport: Transport, timeout: float) -> Tuple[str, str]:
     return "legacy", LEGACY_VERSIONS[0]
 
 
-def initialize_legacy(transport: Transport, version: str, timeout: float) -> str:
+def initialize_legacy(transport: Transport, version: str, timeout: float,
+                      probe_out: Optional[Dict[str, Any]] = None) -> str:
     """The pre-2026-07-28 handshake, used only when the era probe says legacy."""
     tried = []
     for candidate in (version,) + LEGACY_VERSIONS:
@@ -148,6 +175,8 @@ def initialize_legacy(transport: Transport, version: str, timeout: float) -> str
         )
         result = message.get("result")
         if isinstance(result, dict):
+            if probe_out is not None:
+                probe_out.update(message)
             negotiated = str(result.get("protocolVersion") or candidate)
             if hasattr(transport, "protocol_version"):
                 transport.protocol_version = negotiated  # type: ignore[attr-defined]
@@ -210,11 +239,17 @@ def fetch(server: Server, timeout: float = 15.0, cwd: Optional[str] = None) -> N
     transport: Optional[Transport] = None
     try:
         transport = build_transport(server, cwd)
-        era, version = negotiate(transport, timeout)
+        probe: Dict[str, Any] = {}
+        era, version = negotiate(transport, timeout, probe)
         if era == "legacy":
-            version = initialize_legacy(transport, version, timeout)
+            version = initialize_legacy(transport, version, timeout, probe)
         server.protocol_era = era
         server.protocol_version = version
+        info = server_info(probe)
+        if isinstance(info, dict):
+            server.server_name = info.get("name") if isinstance(info.get("name"), str) else None
+            server.server_version = (
+                info.get("version") if isinstance(info.get("version"), str) else None)
         server.tools = list_tools(transport, era, version, timeout)
         server.fetch_status = "ok"
     except TransportError as exc:

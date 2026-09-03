@@ -89,6 +89,13 @@ class Server:
     fetch_detail: Optional[str] = None
     protocol_version: Optional[str] = None
     protocol_era: Optional[str] = None  # "modern" | "legacy"
+    # What the server calls itself on the wire. Modern servers put this in every
+    # result's _meta; legacy servers return it from initialize. It is the only
+    # way to learn which version is actually running, because a config that says
+    # `npx -y pkg` pins nothing and npx serves whatever it had cached.
+    server_name: Optional[str] = None
+    server_version: Optional[str] = None
+    version_pinned: bool = False
     tools: List[Dict[str, Any]] = field(default_factory=list)
     token_total: Optional[int] = None
     token_method: Optional[str] = None

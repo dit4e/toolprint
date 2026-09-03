@@ -1,34 +1,27 @@
 #!/usr/bin/env python3
 """mcp_collect.py - describe this machine's MCP setup, for assessment.
-
 Reads your MCP client config files and writes ONE local JSON file describing what
 is installed. With --connect it also asks each server for its list of tools.
-
 IT CANNOT SEND ANYTHING ANYWHERE. No upload, no telemetry, no phone-home. It
 writes a local file; you read it and you decide whether to send it. That is an
 architectural fact, not a promise: the only outbound call in this file is the
 single urlopen() in http_call(), it runs only under --connect, and it goes only
 to YOUR OWN MCP servers. Grep for urlopen - two hits, this line and that call.
-
-COLLECTS        server names, source client, transport, the BASENAME of any
-                command ("npx"), the HOSTNAME of any remote server, the NAMES of
-                auth environment variables and headers, and - with --connect -
-                the tool definitions each server advertises.
-
-NEVER COLLECTS  environment variable values, header values, API keys, tokens or
-                passwords; full command lines or arguments; absolute file paths;
-                URL paths or query strings; your username or machine hostname;
-                the contents of any file, request or response.
-
+COLLECTS  server names, source client, transport, the BASENAME of any command
+          ("npx"), the HOSTNAME of any remote server, the NAMES of auth
+          environment variables and headers, the name and version each server
+          reports for itself, and - with --connect - its tool definitions.
+NEVER COLLECTS  environment variable values, header values, API keys, tokens
+          or passwords; full command lines or arguments; absolute file paths;
+          URL paths or query strings; your username or machine hostname; the
+          contents of any file, request or response.
 Redaction is an ALLOWLIST: only fields named in EMITTED_FIELDS below are written,
-so nothing outside that list can reach the output, including fields added later.
-Read that one constant and you know the whole story.
-
+so nothing outside it can reach the output, including fields added later. Read
+that one constant and you know the whole story.
 USAGE   python3 mcp_collect.py            config only: no network, no subprocesses
         python3 mcp_collect.py --connect  also ask each server for its tools
-
-        --dry-run shows what would run without running it; --anonymize SALT hashes
-        names; --config PATH reads an explicit file; --out PATH sets the output.
+        --dry-run shows what would run without running it; --anonymize SALT
+        hashes names; --config PATH reads a file; --out PATH sets the output.
         Python 3.9+, standard library only, nothing is installed.
 """
 import argparse, glob, hashlib, hmac, json, os, platform, re, shutil, subprocess, sys, textwrap, threading
@@ -42,7 +35,8 @@ LEGACY_VERSION = "2025-11-25"     # newest revision that still requires initiali
 EMITTED_FIELDS = {
     "server": ["name", "source_client", "scope", "transport", "command_basename",
                "auth_method", "auth_env_names", "auth_header_names", "url_host",
-               "fetch_status", "protocol_version", "protocol_era"],
+               "fetch_status", "protocol_version", "protocol_era",
+               "server_name", "server_version", "version_pinned"],
     "tool": ["name", "title", "description", "inputSchema", "outputSchema",
              "annotations", "token_estimate", "token_method"],
 }
@@ -50,7 +44,8 @@ EMITTED_FIELDS = {
 DATA_POLICY = (
     "This bundle contains: MCP server names, source client, transport type, command "
     "basenames, remote hostnames, the NAMES of auth environment variables and headers, "
-    "and the full tool definitions each server advertises.\n"
+    "the name and version each server reports for itself, and the full tool "
+    "definitions each server advertises.\n"
     "It does NOT contain: environment variable values, header values, API keys, tokens "
     "or passwords; full command lines or arguments; absolute file paths; URL paths or "
     "query strings; your username or machine hostname; or the contents of any file, "
@@ -106,7 +101,7 @@ def auth_method(entry):
         return "helper_command"
     if isinstance(entry.get("oauth"), dict):
         return "oauth"
-    for name, value in pairs:
+    for name, value in pairs:   # names only ever leave this function
         if isinstance(value, str) and is_credential_name(name):
             # "${VAR}" is hygienic; a literal value sitting in a config file is not.
             return "env_var" if ENV_REF.search(value) else "literal_secret"
@@ -235,14 +230,13 @@ class Stdio(object):
         def read():
             for line in self.proc.stdout:
                 try:                # some servers print non-MCP noise on stdout
-                    message = json.loads(line.strip())
+                    m = json.loads(line.strip())
                 except ValueError:
                     continue
-                if isinstance(message, dict) and message.get("id") == 1:
-                    return result.update(message)
+                if isinstance(m, dict) and m.get("id") == 1:
+                    return result.update(m)
         reader = threading.Thread(target=read, daemon=True)
-        reader.start()
-        reader.join(TIMEOUT)
+        reader.start(); reader.join(TIMEOUT)
         if not result:
             raise RuntimeError((self.err[-1] if self.err else "no response")[:120])
         return result
@@ -252,6 +246,25 @@ class Stdio(object):
             self.proc.wait(timeout=3)
         except Exception:
             self.proc.kill()
+
+def server_info(message):
+    """The server's self-reported identity: in every result's _meta on modern
+    revisions, from the initialize handshake on older ones."""
+    result = message.get("result") if isinstance(message, dict) else None
+    meta = (result.get("_meta") or {}) if isinstance(result, dict) else {}
+    info = meta.get("io.modelcontextprotocol/serverInfo") or (
+        result.get("serverInfo") if isinstance(result, dict) else None)
+    return info if isinstance(info, dict) else {}
+
+
+def version_is_pinned(args):
+    """`npx -y pkg` does not mean latest: the package manager serves a cached
+    copy when it has one, so an unpinned config runs whatever it last fetched."""
+    return any(isinstance(a, str) and not a.startswith("-") and
+               (re.search(r"[=~!<>]=+\s*[0-9]", a) or
+                re.match(r"^@?[^@\s]+/?[^@\s]*@(?!latest$|next$|beta$)[0-9]", a))
+               for a in args or ())
+
 
 def negotiate(probe):
     """Pick a version, then let the version decide the era. A server can answer
@@ -265,38 +278,39 @@ def negotiate(probe):
     return version, ("modern" if version >= PROTOCOL_VERSION else "legacy")
 
 def fetch_tools(entry, transport):
-    """Return (status, version, era, tools). Records failures; never raises."""
-    conn = None
+    """Return (status, version, era, tools, info). Records failures; never raises."""
+    conn, info = None, {}
     try:
         url, headers, session = entry.get("url"), entry.get("headers"), None
         if transport == "stdio":
             command = entry.get("command")
             if not command or not (shutil.which(command) or os.path.exists(command)):
-                return "unreachable", None, None, []   # the command is not installed
+                return "unreachable", None, None, [], {}   # command not installed
             conn = Stdio(command, entry.get("args") or [], entry.get("env"))
             probe = conn.request("server/discover", PROTOCOL_VERSION)
         elif transport in ("http", "sse"):
             probe, session = http_call(url, headers, "server/discover", PROTOCOL_VERSION)
         else:
-            return "unsupported", None, None, []
+            return "unsupported", None, None, [], {}
         version, era = negotiate(probe)
+        info = server_info(probe)
         if era == "legacy":
             params = {"protocolVersion": version, "capabilities": {},
                       "clientInfo": {"name": "mcp_collect", "version": KIT_VERSION}}
-            if conn:
-                conn.request("initialize", version, params)
-            else:
-                _, session = http_call(url, headers, "initialize", version, params, session)
+            reply = (conn.request("initialize", version, params) if conn else
+                     http_call(url, headers, "initialize", version, params, session)[0])
+            info = server_info(reply) or info
         reply = conn.request("tools/list", version) if conn else \
             http_call(url, headers, "tools/list", version, None, session)[0]
         result = reply.get("result")
         if not isinstance(result, dict):   # answered, but not with a tools/list
-            return "not_mcp", None, None, []
-        return "ok", version, era, [t for t in (result.get("tools") or []) if isinstance(t, dict)]
+            return "not_mcp", None, None, [], {}
+        tools = [t for t in (result.get("tools") or []) if isinstance(t, dict)]
+        return "ok", version, era, tools, info
     except RuntimeError as exc:
-        return ("auth_required" if str(exc) == "auth_required" else "error"), None, None, []
+        return ("auth_required" if str(exc) == "auth_required" else "error"), None, None, [], {}
     except Exception:
-        return "error", None, None, []
+        return "error", None, None, [], {}
     finally:
         if conn:
             conn.close()
@@ -325,17 +339,19 @@ def build(entries, connect, salt, errors):
     servers, count = [], token_counter()
     for client, scope, name, entry in sorted(entries, key=lambda e: (e[0], e[1], e[2])):
         transport = transport_of(entry)
-        status, version, era, tools = ("not_attempted", None, None, [])
+        status, version, era, tools, info = ("not_attempted", None, None, [], {})
         if connect:
-            status, version, era, tools = fetch_tools(entry, transport)
+            status, version, era, tools, info = fetch_tools(entry, transport)
         values = {"name": anonymise(name, salt, "server"), "source_client": client,
                   "scope": scope, "transport": transport, "fetch_status": status,
-                  "command_basename": basename(entry.get("command")),
-                  "auth_method": auth_method(entry), "protocol_era": era,
+                  "command_basename": basename(entry.get("command")), "protocol_era": era,
+                  "auth_method": auth_method(entry), "protocol_version": version,
                   "auth_env_names": sorted((entry.get("env") or {}).keys()),
                   "auth_header_names": sorted((entry.get("headers") or {}).keys()),
                   "url_host": anonymise(host_only(entry.get("url")), salt, "host"),
-                  "protocol_version": version}
+                  "server_name": anonymise(info.get("name"), salt, "impl"),
+                  "server_version": info.get("version"),
+                  "version_pinned": version_is_pinned(entry.get("args"))}
         record = {f: values[f] for f in EMITTED_FIELDS["server"]}
         record["tools"] = [tool_record(t, count) for t in tools]
         servers.append(record)

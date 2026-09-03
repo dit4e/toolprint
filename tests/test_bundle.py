@@ -23,7 +23,13 @@ from toolprint import bundle, discover
 from tests.fixtures import build as fixture
 
 KIT = Path(__file__).resolve().parent.parent / "src" / "toolprint" / "vendor" / "mcp_collect.py"
-LINE_BUDGET = 400
+# Raised from 400 when the kit gained server-version capture. The number is not
+# the point - the point is that a sceptical security engineer reads the whole
+# file in five minutes and approves it. What protects that is the audit surface
+# staying at the top and the code staying linear, not a round number. Raise it
+# again only for something that earns its lines, and never to accommodate
+# cleverness.
+LINE_BUDGET = 425
 
 
 class TestKitConstraints(unittest.TestCase):
@@ -290,5 +296,5 @@ class TestDistribution(unittest.TestCase):
     def test_readme_states_the_line_budget_the_kit_actually_meets(self):
         readme = (Path(__file__).resolve().parent.parent / "docs" /
                   "collection-kit-README.md").read_text(encoding="utf-8")
-        self.assertIn("Under 400 lines", readme)
-        self.assertLess(len(KIT.read_text(encoding="utf-8").splitlines()), 400)
+        self.assertIn("Under 425 lines", readme)
+        self.assertLess(len(KIT.read_text(encoding="utf-8").splitlines()), LINE_BUDGET)

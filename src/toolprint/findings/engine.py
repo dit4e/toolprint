@@ -270,6 +270,29 @@ def _hygiene_findings(inventory: Inventory, contexts: Sequence[Context]) -> List
             evidence={"locations": locations},
         ))
 
+    unpinned = [
+        s for s in sorted(inventory.servers, key=lambda s: s.key)
+        if s.transport == "stdio" and s.enabled and not s.version_pinned
+    ]
+    if unpinned:
+        seen_pins: Dict[str, Any] = {}
+        for server in unpinned:
+            seen_pins[server.key] = {
+                "running_version": server.server_version,
+                "reported_name": server.server_name,
+                "command": server.command_basename,
+            }
+        known = [s for s in unpinned if s.server_version]
+        found.append(_make(
+            "HYG-005", LOW,
+            "{} run whatever version the package manager had cached{}.".format(
+                _plural(len(unpinned), "local server"),
+                "; {} reported the version actually running".format(len(known))
+                if known else ""),
+            affected=[{"server": s.key, "tool": ""} for s in unpinned],
+            evidence={"servers": seen_pins},
+        ))
+
     shadowed = all_shadowed(contexts)
     benign = [s for s in shadowed if not s.endpoint_differs]
     conflicting = [s for s in shadowed if s.endpoint_differs]
@@ -370,6 +393,9 @@ def analyse(
         "unauthenticated_high_consequence": sum(
             len(f.affected) for f in findings if f.id == "AUTH-001"),
         "shadowed_entries": len(all_shadowed(contexts)),
+        "unpinned_servers": sum(
+            1 for s in inventory.servers
+            if s.transport == "stdio" and s.enabled and not s.version_pinned),
         "unused_tools": None,  # requires --usage data; M2 does not consume it
     }
 

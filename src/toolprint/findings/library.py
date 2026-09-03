@@ -150,6 +150,18 @@ DEFINITIONS: Dict[str, Definition] = {d.id: d for d in [
         "unauthenticated in another, and a later change to either definition "
         "is invisible. Rename one.",
     ),
+    Definition(
+        "HYG-005", HYGIENE,
+        "Server version is not pinned, so the running version is whatever was "
+        "cached",
+        "Pin the version in the config, and re-baseline when you change it.",
+        "A command like `npx -y pkg` does not mean the latest release. The "
+        "package manager serves a cached copy when it has one, so two machines "
+        "with identical configuration can run different versions for months, "
+        "and a version with a known problem keeps running until something "
+        "clears the cache. The version each server reports on the wire is "
+        "listed below; pin the ones you rely on.",
+    ),
 ]}
 
 

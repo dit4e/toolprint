@@ -10,6 +10,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+import re
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
@@ -18,6 +19,28 @@ from .model import CollectionError, Inventory, Server
 
 # Config keys that mark a server as switched off, across clients.
 DISABLED_KEYS = ("disabled", "isDisabled")
+
+# Version specifiers as the two dominant runners spell them.
+#   npx  @scope/pkg@1.2.3   pkg@1.2.3   pkg@latest
+#   uvx  pkg==1.2.3         pkg@1.2.3   --from pkg==1.2.3
+_NPM_PINNED = re.compile(r"^@?[^@\s]+/?[^@\s]*@(?!latest$|next$|beta$)[0-9][^@\s]*$")
+_PY_PINNED = re.compile(r"[=~!<>]=+\s*[0-9]")
+
+
+def version_is_pinned(args: Sequence[str]) -> bool:
+    """Does this command name an exact version, or accept whatever is cached?
+
+    `npx -y pkg` does not mean "latest": npx serves a cached copy when it has
+    one. A local cache on this machine held a package from March 2025 while a
+    clean runner fetched the August 2026 release of the same unpinned spec, and
+    nothing anywhere reported the difference.
+    """
+    for arg in args or ():
+        if not isinstance(arg, str) or arg.startswith("-"):
+            continue
+        if _PY_PINNED.search(arg) or _NPM_PINNED.match(arg):
+            return True
+    return False
 
 
 def normalise_root(path: Optional[str]) -> Optional[str]:
@@ -131,6 +154,7 @@ def parse_server(
         raw_env={k: v for k, v in env.items() if isinstance(v, str)},
         has_oauth=has_oauth,
         enabled=enabled,
+        version_pinned=version_is_pinned(args),
         auth_method=auth_method,
         secret_locations=secrets,
         parse_notes=notes + auth_notes,

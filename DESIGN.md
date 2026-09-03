@@ -99,6 +99,24 @@ specific explanation would never print. All are the same severity, so nothing is
 under-reported — the reader gets "invisible characters appeared" instead of "the
 text changed", which is the difference between a finding and a diff.
 
+## The running version is read from the wire, not the config
+
+`npx -y pkg` does not mean "the latest release". It means "whatever the package
+manager last cached, else fetch". A cache on one machine held a March 2025 build
+while a clean CI runner fetched the August 2026 release of the same unpinned
+spec — an eighteen-month gap between two machines with identical configuration,
+and nothing anywhere reported it.
+
+So the version is taken from what the server says about itself: `_meta`'s
+`io.modelcontextprotocol/serverInfo` on 2026-07-28, or the `initialize` result
+on older revisions. That is the only answer that reflects what is running rather
+than what was requested.
+
+`HYG-005` reports servers whose config pins no version, and lists what each one
+turned out to be. The tool does not check whether a version is current — that
+would mean querying a package registry, and this runs offline by design. It
+tells you what you are running and leaves the comparison to you.
+
 ## Baselines record the platform they were taken on
 
 Some servers describe themselves differently depending on where they run.

@@ -184,6 +184,7 @@ def _render_inventory(inventory: Inventory, servers: List[Server], add) -> None:
 
 def _render_contexts(contexts: Sequence[Context], connected: bool, add) -> None:
     add("  CONTEXTS — what actually loads, after scope precedence")
+    add("    (* = version the server reports, from a config that pins none)")
     for context in contexts:
         tool_count, total, _ = context_cost(context)
         summary = _plural(len(context.servers), "server")
@@ -201,8 +202,11 @@ def _render_contexts(contexts: Sequence[Context], connected: bool, add) -> None:
                         len(server.tools), "{:,}".format(server.token_total or 0))
                 else:
                     status = STATUS_LABEL.get(server.fetch_status, server.fetch_status)
-            add("        {:<20} {:<6} {:<20} {:<14} {}".format(
-                server.name[:20], server.scope[:6], _endpoint(server)[:20],
+            version = server.server_version or ""
+            if version and server.transport == "stdio" and not server.version_pinned:
+                version += "*"      # running, but not what the config asked for
+            add("        {:<20} {:<6} {:<18} {:<9} {:<14} {}".format(
+                server.name[:20], server.scope[:6], _endpoint(server)[:18], version[:9],
                 AUTH_LABEL.get(server.auth_method, server.auth_method), status).rstrip())
         add("")
 

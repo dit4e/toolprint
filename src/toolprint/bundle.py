@@ -34,7 +34,8 @@ BUNDLE_VERSION = 1
 EMITTED_FIELDS = {
     "server": ["name", "source_client", "scope", "transport", "command_basename",
                "auth_method", "auth_env_names", "auth_header_names", "url_host",
-               "fetch_status", "protocol_version", "protocol_era"],
+               "fetch_status", "protocol_version", "protocol_era",
+               "server_name", "server_version", "version_pinned"],
     "tool": ["name", "title", "description", "inputSchema", "outputSchema",
              "annotations", "token_estimate", "token_method"],
     # No "usage" entry: neither this exporter nor mcp_collect.py collects call
@@ -115,6 +116,11 @@ def _server(server: Server, anon: Anonymiser) -> Dict[str, Any]:
         "fetch_status": server.fetch_status,
         "protocol_version": server.protocol_version,
         "protocol_era": server.protocol_era,
+        # What the server calls itself, which is the only way to know which
+        # version is actually running when the config pins none.
+        "server_name": anon.name(server.server_name, "impl") if anon.active else server.server_name,
+        "server_version": server.server_version,
+        "version_pinned": server.version_pinned,
     }
     out: "OrderedDict[str, Any]" = OrderedDict(
         (field, values[field]) for field in EMITTED_FIELDS["server"])

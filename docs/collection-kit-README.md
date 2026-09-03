@@ -14,7 +14,7 @@ it the two lists below and the script's own header.
 | | |
 |---|---|
 | **Language** | Python 3.9+, standard library only. Nothing is installed. |
-| **Length** | Under 400 lines including comments. It is meant to be read. |
+| **Length** | Under 425 lines including comments. It is meant to be read. |
 | **Network** | None by default. With `--connect`, only your own MCP servers. |
 | **Can it upload?** | No. There is no code path that sends the output anywhere. |
 | **Output** | One JSON file in your working directory. |
@@ -27,6 +27,9 @@ it the two lists below and the script's own header.
 - Transport type (`stdio`, `http`, `sse`, `ws`)
 - The **basename** of any command — `npx`, `uvx`, `python` — never the full line
 - The **hostname** of any remote server — never the path or query string
+- The **name and version each server reports for itself**, which is the only way
+  to know what is actually running: `npx -y pkg` does not mean the latest
+  release, it means whatever the package manager last cached
 - The **names** of environment variables and HTTP headers used for authentication
 - Whether authentication is absent, an environment reference, a literal value in
   the config file, OAuth, or produced by a helper command
