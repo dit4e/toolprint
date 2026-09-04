@@ -15,6 +15,10 @@ still, and Dependabot will keep either up to date:
 uses: dit4e/toolprint@v0.2.0
 ```
 
+Pinning the action pins the tool: the action installs the toolprint release
+matching the tag it was called with. Pass `version: latest` to opt out, or an
+explicit version to override.
+
 ## Report the current surface
 
 ```yaml

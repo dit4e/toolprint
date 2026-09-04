@@ -54,6 +54,10 @@ def build_parser() -> argparse.ArgumentParser:
                       help="context window used for %% calculations (default 200000)")
     scan.add_argument("--timeout", type=float, default=15.0, metavar="SECONDS",
                       help="per-request timeout when connecting (default 15)")
+    scan.add_argument("--startup-timeout", type=float, default=90.0, metavar="SECONDS",
+                      help="allowance for a stdio server's FIRST reply, which also "
+                           "covers the package manager downloading it (default 90). "
+                           "A ceiling, not a delay: a fast server is still fast")
     scan.add_argument("--yes", action="store_true",
                       help="skip the confirmation prompt before contacting servers")
     scan.add_argument("--format", choices=["text", "json", "sarif"], default="text")
@@ -90,6 +94,9 @@ def build_parser() -> argparse.ArgumentParser:
         cmd.add_argument("--client", action="append", default=[], metavar="NAME",
                          choices=registry.CLIENT_IDS)
         cmd.add_argument("--timeout", type=float, default=15.0, metavar="SECONDS")
+        cmd.add_argument("--startup-timeout", type=float, default=90.0, metavar="SECONDS",
+                         help="allowance for a stdio server's first reply, covering "
+                              "the package manager downloading it (default 90)")
         cmd.add_argument("--yes", action="store_true",
                          help="skip the confirmation prompt before contacting servers")
         # Accepted and ignored. These commands cannot work without live tool
@@ -184,7 +191,8 @@ def cmd_scan(args: argparse.Namespace) -> int:
         if plan.targets:
             def progress(server):
                 sys.stderr.write("  contacting {}...\n".format(server.key))
-            connect.execute(plan, contexts, timeout=args.timeout, progress=progress)
+            connect.execute(plan, contexts, timeout=args.timeout, progress=progress,
+                            startup_timeout=args.startup_timeout)
             sys.stderr.write("\n")
 
     report = engine.analyse(inventory, contexts, args.window, args.price_per_mtok)
@@ -256,7 +264,8 @@ def _collect_live(args: argparse.Namespace):
         except EOFError:
             return inventory, contexts, False
     if plan.targets:
-        connect.execute(plan, contexts, timeout=args.timeout)
+        connect.execute(plan, contexts, timeout=args.timeout,
+                        startup_timeout=getattr(args, "startup_timeout", None))
     return inventory, contexts, True
 
 

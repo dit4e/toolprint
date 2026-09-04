@@ -34,7 +34,10 @@ inputs:
     required: false
     default: toolprint.sarif
   version:
-    description: Version of toolprint to install.
+    description: >-
+      Version of toolprint to install. Defaults to the version matching the tag
+      this action was called with, so pinning the action pins the tool too.
+      Set explicitly to override; set to "latest" to always take the newest.
     required: false
     default: ""
 
@@ -63,11 +66,24 @@ runs:
       # save it. Via env it is data.
       env:
         VERSION: ${{ inputs.version }}
+        ACTION_REF: ${{ github.action_ref }}
       run: |
-        if [ -n "$VERSION" ]; then
-          python -m pip install --quiet "toolprint[tokens]==$VERSION"
-        else
+        # Pinning the action must pin the tool. Installing whatever is newest
+        # while the caller has carefully pinned `@v0.2.0` makes that pin
+        # meaningless - and this action's own documentation tells people to pin
+        # precisely because a tag someone can move is not a guarantee.
+        if [ -z "$VERSION" ]; then
+          case "$ACTION_REF" in
+            v[0-9]*) VERSION="${ACTION_REF#v}" ;;      # called as @v0.2.0
+            *)       VERSION="latest" ;;               # a branch or a SHA
+          esac
+        fi
+        if [ "$VERSION" = "latest" ]; then
+          echo "installing the newest toolprint (action called as '$ACTION_REF')"
           python -m pip install --quiet "toolprint[tokens]"
+        else
+          echo "installing toolprint==$VERSION"
+          python -m pip install --quiet "toolprint[tokens]==$VERSION"
         fi
 
     - name: Run toolprint

@@ -234,13 +234,29 @@ def build_transport(server: Server, cwd: Optional[str] = None) -> Transport:
     raise TransportError("unsupported", "transport {!r} is not supported".format(server.transport))
 
 
-def fetch(server: Server, timeout: float = 15.0, cwd: Optional[str] = None) -> None:
-    """Populate server.tools and fetch_status in place. Never raises."""
+def fetch(server: Server, timeout: float = 15.0, cwd: Optional[str] = None,
+          startup_timeout: Optional[float] = None) -> None:
+    """Populate server.tools and fetch_status in place. Never raises.
+
+    First contact with a stdio server is a different operation from every
+    request after it: the package manager may still be downloading the server
+    before anything can start. Charging both to one timeout is a modelling
+    error, and it shows up as `unreachable` for servers that were merely slow to
+    arrive - observed on a CI runner where 23 of 36 servers reported "timed out
+    after 60s" while all of them worked locally.
+
+    A ceiling is not a delay: a server that answers in two seconds still answers
+    in two seconds, so a generous startup allowance costs nothing when things
+    work. Remote transports have nothing to download, so it does not apply.
+    """
     transport: Optional[Transport] = None
+    first = timeout
+    if server.transport == "stdio" and startup_timeout:
+        first = max(timeout, startup_timeout)
     try:
         transport = build_transport(server, cwd)
         probe: Dict[str, Any] = {}
-        era, version = negotiate(transport, timeout, probe)
+        era, version = negotiate(transport, first, probe)
         if era == "legacy":
             version = initialize_legacy(transport, version, timeout, probe)
         server.protocol_era = era

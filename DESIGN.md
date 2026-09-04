@@ -132,6 +132,22 @@ mode for a worse one.
 
 The practical advice is simpler: baseline in the environment you check from.
 
+## First contact is a different operation from every request after it
+
+Starting a stdio server can mean the package manager downloading it first.
+Charging the download and the reply to a single timeout reports servers as
+`unreachable` when they were only slow to arrive — on a CI runner, 23 of 36
+reported *"timed out after 60s"* while every one of them worked locally.
+
+So a stdio server's first request gets `--startup-timeout` (default 90s),
+covering download, boot and reply; everything after it gets `--timeout`
+(default 15s), which is only a reply. Remote transports have nothing to
+download and are unaffected.
+
+A ceiling is not a delay. A server that answers in two seconds still answers in
+two seconds, so the larger allowance costs nothing when things work — it only
+changes the case that was previously reported as a failure.
+
 ## A check that reached nothing is not a pass
 
 Unreachable servers produce no drift: a server missing from one side of the

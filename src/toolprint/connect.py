@@ -101,6 +101,7 @@ def execute(
     contexts: Sequence[Context],
     timeout: float = 15.0,
     progress=None,
+    startup_timeout: Optional[float] = None,
 ) -> None:
     """Fetch each target once, then mirror the result onto every matching entry."""
     results: Dict[Tuple, Server] = {}
@@ -108,7 +109,8 @@ def execute(
     for server in plan_.targets:
         if progress:
             progress(server)
-        protocol.fetch(server, timeout=timeout, cwd=server.project_root)
+        protocol.fetch(server, timeout=timeout, cwd=server.project_root,
+                       startup_timeout=startup_timeout)
         if server.tools:
             per_tool, total, method = tokens.count_tools(server.tools)
             server.tool_tokens = per_tool

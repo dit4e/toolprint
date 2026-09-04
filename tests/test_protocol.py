@@ -153,3 +153,66 @@ class TestListTools(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestStartupTimeout(unittest.TestCase):
+    """First contact with a stdio server is a different operation from the rest.
+
+    The package manager may still be downloading the server before anything can
+    start. Charging both to one timeout reports servers as unreachable when they
+    were merely slow to arrive - observed on a CI runner where 23 of 36 reported
+    "timed out after 60s" while every one of them worked locally.
+    """
+
+    def server(self, transport="stdio"):
+        from toolprint.model import Server
+
+        return Server(name="s", client="c", scope="user", scope_detail=None,
+                      source_path="/p", transport=transport,
+                      command="npx" if transport == "stdio" else None,
+                      url=None if transport == "stdio" else "https://x.example/mcp")
+
+    def timeouts_used(self, srv, **kw):
+        """Record the timeout given to each request."""
+        seen = []
+        fake = FakeTransport([
+            discover_result(["2026-07-28"]),
+            {"result": {"tools": []}},
+        ])
+        original = fake.request
+
+        def spy(method, params, timeout=15.0):
+            seen.append((method, timeout))
+            return original(method, params, timeout)
+
+        fake.request = spy
+        protocol.build_transport = lambda *a, **k: fake      # noqa: patched below
+        try:
+            protocol.fetch(srv, **kw)
+        finally:
+            pass
+        return seen
+
+    def setUp(self):
+        self._build = protocol.build_transport
+
+    def tearDown(self):
+        protocol.build_transport = self._build
+
+    def test_first_stdio_request_gets_the_startup_allowance(self):
+        seen = self.timeouts_used(self.server("stdio"), timeout=15.0, startup_timeout=90.0)
+        self.assertEqual(seen[0][0], "server/discover")
+        self.assertEqual(seen[0][1], 90.0)          # download plus boot plus reply
+        self.assertEqual(seen[1][1], 15.0)          # just a reply
+
+    def test_remote_transports_have_nothing_to_download(self):
+        seen = self.timeouts_used(self.server("http"), timeout=15.0, startup_timeout=90.0)
+        self.assertEqual(seen[0][1], 15.0)
+
+    def test_a_larger_timeout_is_never_reduced(self):
+        seen = self.timeouts_used(self.server("stdio"), timeout=120.0, startup_timeout=90.0)
+        self.assertEqual(seen[0][1], 120.0)
+
+    def test_absent_startup_timeout_changes_nothing(self):
+        seen = self.timeouts_used(self.server("stdio"), timeout=15.0)
+        self.assertEqual(seen[0][1], 15.0)
