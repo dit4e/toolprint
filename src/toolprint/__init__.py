@@ -7,4 +7,4 @@ what those definitions are, and whether they changed without review.
 # The public name is spelled here and in cli.py's argparse prog only, which is
 # what made the rename from the mcpdrift placeholder a two-line change.
 TOOL_NAME = "toolprint"
-__version__ = "0.2.3"
+__version__ = "0.3.0"
