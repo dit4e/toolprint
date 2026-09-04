@@ -12,7 +12,7 @@ trust a tag someone can move under you. Pinning to a commit SHA is stronger
 still, and Dependabot will keep either up to date:
 
 ```yaml
-uses: dit4e/toolprint@v0.1.0
+uses: dit4e/toolprint@v0.2.0
 ```
 
 ## Report the current surface
@@ -31,7 +31,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - id: toolprint
-        uses: dit4e/toolprint@v0.1.0
+        uses: dit4e/toolprint@v0.2.0
         with:
           fail-on: high
       - uses: github/codeql-action/upload-sarif@v3
@@ -58,7 +58,7 @@ git add .toolprint-baseline.json && git commit -m "Approve MCP tool surface"
 
 ```yaml
       - id: toolprint
-        uses: dit4e/toolprint@v0.1.0
+        uses: dit4e/toolprint@v0.2.0
         with:
           mode: check
           baseline: .toolprint-baseline.json
