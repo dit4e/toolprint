@@ -30,8 +30,37 @@ from typing import List, Optional, Sequence
 
 # npm keys each npx cache directory by a hash of the requested spec, and records
 # that spec in a package.json at the top of the directory.
+#
+# Both tools relocate their cache on request, and CI routinely does: a GitHub
+# runner with astral-sh/setup-uv exports UV_CACHE_DIR into a temp path, so a
+# hardcoded ~/.cache/uv finds nothing there - which is exactly what happened on
+# the first run, 36 servers with no cached copy found. Environment first,
+# conventional locations after.
 NPX_ROOTS = ("~/.npm/_npx",)
 UV_ROOTS = ("~/.cache/uv/archive-v0", "~/Library/Caches/uv/archive-v0")
+NPM_CACHE_VARS = ("npm_config_cache", "NPM_CONFIG_CACHE")
+UV_CACHE_VARS = ("UV_CACHE_DIR",)
+
+
+def _roots(configured: Sequence[str], env_vars: Sequence[str], suffix: str) -> List[Path]:
+    """Cache directories to search, environment-configured ones first."""
+    found: List[Path] = []
+    for var in env_vars:
+        value = os.environ.get(var)
+        if value:
+            found.append(Path(os.path.expanduser(value)) / suffix)
+    xdg = os.environ.get("XDG_CACHE_HOME")
+    if xdg and suffix == "archive-v0":
+        found.append(Path(os.path.expanduser(xdg)) / "uv" / suffix)
+    if xdg and suffix == "_npx":
+        found.append(Path(os.path.expanduser(xdg)) / "npm" / suffix)
+    found.extend(Path(os.path.expanduser(p)) for p in configured)
+    seen, unique = set(), []
+    for path in found:
+        if str(path) not in seen:
+            seen.add(str(path))
+            unique.append(path)
+    return unique
 
 MAX_NPX_DIRS = 400          # a busy machine accumulates these; do not walk forever
 
@@ -64,8 +93,7 @@ def _read_version(path: Path) -> Optional[str]:
 def npm_versions(package: str) -> List[str]:
     """Versions of `package` present in npx's cache, newest-listed first."""
     found: List[str] = []
-    for root in NPX_ROOTS:
-        base = Path(os.path.expanduser(root))
+    for base in _roots(NPX_ROOTS, NPM_CACHE_VARS, "_npx"):
         if not base.is_dir():
             continue
         try:
@@ -103,8 +131,7 @@ def uv_versions(package: str) -> List[str]:
     """
     wanted = _normalise(package)
     found: List[str] = []
-    for root in UV_ROOTS:
-        base = Path(os.path.expanduser(root))
+    for base in _roots(UV_ROOTS, UV_CACHE_VARS, "archive-v0"):
         if not base.is_dir():
             continue
         try:

@@ -8,6 +8,7 @@ registry.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import tempfile
 import unittest
@@ -103,3 +104,45 @@ class TestDiskLookup(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRelocatedCaches(unittest.TestCase):
+    """CI moves these caches, and a hardcoded path finds nothing there.
+
+    A GitHub runner with astral-sh/setup-uv exports UV_CACHE_DIR into a temp
+    path. The first run of this feature on a runner reported no cached copy for
+    all 36 servers, because it was looking under ~/.cache/uv.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self._env = {k: os.environ.get(k) for k in
+                     ("npm_config_cache", "NPM_CONFIG_CACHE", "UV_CACHE_DIR", "XDG_CACHE_HOME")}
+        for key in self._env:
+            os.environ.pop(key, None)
+
+    def tearDown(self):
+        for key, value in self._env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_npm_cache_environment_variable_is_honoured(self):
+        base = self.tmp / "relocated" / "_npx" / "aaa"
+        (base / "node_modules" / "pkg").mkdir(parents=True)
+        (base / "package.json").write_text(json.dumps({"dependencies": {"pkg": "^1"}}))
+        (base / "node_modules" / "pkg" / "package.json").write_text(
+            json.dumps({"version": "9.9.9"}))
+        os.environ["npm_config_cache"] = str(self.tmp / "relocated")
+        self.assertEqual(installed.versions_on_disk("npx", ["-y", "pkg"]), ["9.9.9"])
+
+    def test_uv_cache_environment_variable_is_honoured(self):
+        (self.tmp / "uvrel" / "archive-v0" / "zzz" / "pkg_name-4.5.6.dist-info").mkdir(parents=True)
+        os.environ["UV_CACHE_DIR"] = str(self.tmp / "uvrel")
+        self.assertEqual(installed.versions_on_disk("uvx", ["pkg-name"]), ["4.5.6"])
+
+    def test_a_missing_relocated_directory_is_not_fatal(self):
+        os.environ["UV_CACHE_DIR"] = str(self.tmp / "does-not-exist")
+        self.assertEqual(installed.versions_on_disk("uvx", ["pkg"]), [])

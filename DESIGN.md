@@ -120,6 +120,12 @@ and `~/.cache/uv/archive-v0/*/<name>-<version>.dist-info`. Reading these needs
 no connection, so it stays inside the offline guarantee and works under
 `--no-connect`.
 
+Both tools relocate their cache on request and CI routinely does — a GitHub
+runner with `setup-uv` exports `UV_CACHE_DIR` into a temp path — so
+`npm_config_cache`, `UV_CACHE_DIR` and `XDG_CACHE_HOME` are consulted before the
+conventional locations. The environment is read; no process is spawned, because
+`--no-connect` promises none.
+
 Neither is sufficient. The claim can be wrong; the cache can hold several
 versions, in which case which one ran is genuinely ambiguous and every version
 found is reported rather than one being picked. A package never run on this
