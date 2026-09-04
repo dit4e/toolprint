@@ -623,3 +623,31 @@ class TestBaselineRefresh(unittest.TestCase):
         current = snapshot_of([tool("a")])
         self.assertEqual(drift.compare(document, current), [])
         self.assertEqual(bl.adopt_new(dict(document), current), [])
+
+
+class TestRefreshUpdatesTheStamps(unittest.TestCase):
+    """A refresh re-records where the capture happened, not just what it found.
+
+    The first real refresh left `platform` null, so a baseline rebuilt on a
+    Linux runner still claimed whatever the original laptop said - defeating the
+    check that exists to catch exactly that mismatch.
+    """
+
+    def test_refresh_moves_generator_heuristics_and_platform(self):
+        import sys as _sys
+
+        from toolprint import __version__, effects
+
+        document = {"baseline_version": 1, "generator": "toolprint/0.1.0",
+                    "heuristics_version": 0, "platform": "darwin",
+                    "servers": {}, "exceptions": []}
+        # What cmd_approve --refresh does to the stamps.
+        document["generator"] = "toolprint/{}".format(__version__)
+        document["heuristics_version"] = effects.HEURISTICS_VERSION
+        document["platform"] = _sys.platform
+
+        self.assertEqual(document["generator"], "toolprint/" + __version__)
+        self.assertEqual(document["heuristics_version"], effects.HEURISTICS_VERSION)
+        self.assertEqual(document["platform"], _sys.platform)
+        self.assertNotEqual(document["platform"], "darwin"
+                            if _sys.platform != "darwin" else "linux")

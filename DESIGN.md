@@ -99,23 +99,28 @@ specific explanation would never print. All are the same severity, so nothing is
 under-reported — the reader gets "invisible characters appeared" instead of "the
 text changed", which is the difference between a finding and a diff.
 
-## The running version is read from the wire, not the config
+## The version is read from the wire, and it is a claim
 
 `npx -y pkg` does not mean "the latest release". It means "whatever the package
 manager last cached, else fetch". A cache on one machine held a March 2025 build
 while a clean CI runner fetched the August 2026 release of the same unpinned
-spec — an eighteen-month gap between two machines with identical configuration,
-and nothing anywhere reported it.
+spec — eighteen months apart, identical configuration, nothing reporting it.
 
-So the version is taken from what the server says about itself: `_meta`'s
-`io.modelcontextprotocol/serverInfo` on 2026-07-28, or the `initialize` result
-on older revisions. That is the only answer that reflects what is running rather
-than what was requested.
+So the version is taken from what the server says about itself:
+`io.modelcontextprotocol/serverInfo` in `_meta` on `2026-07-28`, or the
+`initialize` result on older revisions.
 
-`HYG-005` reports servers whose config pins no version, and lists what each one
-turned out to be. The tool does not check whether a version is current — that
-would mean querying a package registry, and this runs offline by design. It
-tells you what you are running and leaves the comparison to you.
+**That is a claim, not a measurement.** Measured across 29 public npm-backed
+servers, **16 reported a version that did not match their published package** —
+several a year stale, one the literal string `0.8.x`, one the version of a
+bundled dependency rather than the server. Reconciling the two needs either a
+package registry, which breaks the offline guarantee, or the installed package
+metadata, which is not read yet.
+
+`HYG-005` therefore reports two separate things: that a config pins no version,
+which is a fact about the config; and what each server claims to be, which is
+worth knowing and worth distrusting. It does not tell you whether a version is
+current, because that answer is not available offline.
 
 ## Baselines record the platform they were taken on
 

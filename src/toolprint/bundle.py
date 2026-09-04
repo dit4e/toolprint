@@ -116,8 +116,9 @@ def _server(server: Server, anon: Anonymiser) -> Dict[str, Any]:
         "fetch_status": server.fetch_status,
         "protocol_version": server.protocol_version,
         "protocol_era": server.protocol_era,
-        # What the server calls itself, which is the only way to know which
-        # version is actually running when the config pins none.
+        # What the server calls itself. A claim rather than a measurement - it
+        # often disagrees with the published package version - but the config
+        # pins nothing, so it is the only version information there is.
         "server_name": anon.name(server.server_name, "impl") if anon.active else server.server_name,
         "server_version": server.server_version,
         "version_pinned": server.version_pinned,

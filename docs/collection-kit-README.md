@@ -27,9 +27,10 @@ it the two lists below and the script's own header.
 - Transport type (`stdio`, `http`, `sse`, `ws`)
 - The **basename** of any command — `npx`, `uvx`, `python` — never the full line
 - The **hostname** of any remote server — never the path or query string
-- The **name and version each server reports for itself**, which is the only way
-  to know what is actually running: `npx -y pkg` does not mean the latest
-  release, it means whatever the package manager last cached
+- The **name and version each server reports for itself**. `npx -y pkg` does not
+  mean the latest release, it means whatever the package manager last cached, so
+  the config alone says nothing about which build ran. Note this is the server's
+  own claim and often disagrees with its package version
 - The **names** of environment variables and HTTP headers used for authentication
 - Whether authentication is absent, an environment reference, a literal value in
   the config file, OAuth, or produced by a helper command

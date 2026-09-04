@@ -287,7 +287,7 @@ def _hygiene_findings(inventory: Inventory, contexts: Sequence[Context]) -> List
             "HYG-005", LOW,
             "{} run whatever version the package manager had cached{}.".format(
                 _plural(len(unpinned), "local server"),
-                "; {} reported the version actually running".format(len(known))
+                "; {} reported a version for themselves".format(len(known))
                 if known else ""),
             affected=[{"server": s.key, "tool": ""} for s in unpinned],
             evidence={"servers": seen_pins},

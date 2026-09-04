@@ -448,6 +448,11 @@ def cmd_approve(args: argparse.Namespace) -> int:
             document.setdefault("servers", {})[identity] = record
         document["generator"] = "toolprint/{}".format(__version__)
         document["heuristics_version"] = effects.HEURISTICS_VERSION
+        # The refreshed records were captured here, so the platform stamp has to
+        # move with them. Leaving the old value would make a baseline refreshed
+        # on Linux still claim it was taken on a Mac, defeating the check that
+        # exists to catch exactly that.
+        document["platform"] = sys.platform
         document["approved_at"] = stamp
         document["approved_by"] = args.by
         baseline_mod.save(args.baseline, document)

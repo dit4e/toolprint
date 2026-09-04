@@ -90,9 +90,13 @@ class Server:
     protocol_version: Optional[str] = None
     protocol_era: Optional[str] = None  # "modern" | "legacy"
     # What the server calls itself on the wire. Modern servers put this in every
-    # result's _meta; legacy servers return it from initialize. It is the only
-    # way to learn which version is actually running, because a config that says
-    # `npx -y pkg` pins nothing and npx serves whatever it had cached.
+    # result's _meta; legacy servers return it from initialize.
+    #
+    # It is a claim, not a measurement. Across 29 public servers, 16 reported a
+    # version that did not match their published package - several a year stale,
+    # one the literal string "0.8.x", one the version of a bundled dependency.
+    # It is still the only version information available offline, and it is
+    # better than the config, which pins nothing at all.
     server_name: Optional[str] = None
     server_version: Optional[str] = None
     version_pinned: bool = False

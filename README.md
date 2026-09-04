@@ -39,7 +39,7 @@ warning.
 | **Mislabelled tools** | Tools whose safety annotation their own name or schema contradicts |
 | **Auth posture** | `none`, `env_var`, `literal_secret`, `helper_command`, `oauth` |
 | **Hygiene** | Credentials stored literally in config files, shadowed entries, unreachable servers |
-| **Actual versions** | What each server reports for itself, and which ones your config pins — `npx -y pkg` runs whatever was cached, not the latest release |
+| **Versions** | Which servers your config pins, and what each one claims to be — `npx -y pkg` runs whatever was cached, not the latest release. The claim often disagrees with the package |
 
 Findings carry stable ids (`AUTH-001`, `COST-001`, `HYG-002`, …) with fixed
 titles and standard remediation, so two reports are comparable.
