@@ -100,6 +100,10 @@ class Server:
     server_name: Optional[str] = None
     server_version: Optional[str] = None
     version_pinned: bool = False
+    # Every version of this package the local package manager holds. Read from
+    # disk, so it needs no connection and stays inside the offline guarantee.
+    # More than one means the cache carries several and which ran is ambiguous.
+    installed_versions: List[str] = field(default_factory=list)
     tools: List[Dict[str, Any]] = field(default_factory=list)
     token_total: Optional[int] = None
     token_method: Optional[str] = None

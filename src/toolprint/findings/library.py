@@ -164,6 +164,18 @@ DEFINITIONS: Dict[str, Definition] = {d.id: d for d in [
         "something else, several of them a year stale and one a literal "
         "placeholder. Treat it as a claim, not a measurement.",
     ),
+    Definition(
+        "HYG-006", HYGIENE,
+        "Server reports a version that is not the one installed",
+        "Trust the installed version, not the server's; tell the maintainer.",
+        "The version a server states for itself does not match any copy of its "
+        "package on this machine. Servers built on the official Python SDK "
+        "commonly report the SDK's version rather than their own, so several "
+        "unrelated servers announce the same number. Whatever the cause, the "
+        "field cannot be used to identify what is running - read the installed "
+        "version instead, and report the mismatch to whoever maintains the "
+        "server.",
+    ),
 ]}
 
 

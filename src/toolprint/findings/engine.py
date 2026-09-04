@@ -282,15 +282,45 @@ def _hygiene_findings(inventory: Inventory, contexts: Sequence[Context]) -> List
                 "reported_name": server.server_name,
                 "command": server.command_basename,
             }
-        known = [s for s in unpinned if s.server_version]
+        ambiguous = [s for s in unpinned if len(s.installed_versions) > 1]
         found.append(_make(
             "HYG-005", LOW,
             "{} run whatever version the package manager had cached{}.".format(
                 _plural(len(unpinned), "local server"),
-                "; {} reported a version for themselves".format(len(known))
-                if known else ""),
+                "; {} have more than one version on disk, so which ran is "
+                "ambiguous".format(len(ambiguous)) if ambiguous else ""),
             affected=[{"server": s.key, "tool": ""} for s in unpinned],
             evidence={"servers": seen_pins},
+        ))
+
+    # A server's self-report is a claim. Where the package is on disk, the claim
+    # can be checked - offline, against the package manager's own cache.
+    misreporting = [
+        s for s in sorted(inventory.servers, key=lambda s: s.key)
+        if s.server_version and s.installed_versions
+        and s.server_version not in s.installed_versions
+    ]
+    if misreporting:
+        seen_claims = {}
+        for server in misreporting:
+            seen_claims[server.key] = {
+                "reports": server.server_version,
+                "installed": server.installed_versions,
+            }
+        shared = {}
+        for server in misreporting:
+            shared.setdefault(server.server_version, []).append(server.name)
+        echoed = {v: n for v, n in shared.items() if len(set(n)) > 1}
+        found.append(_make(
+            "HYG-006", LOW,
+            "{} report a version that is not installed on this machine{}.".format(
+                _plural(len(misreporting), "server"),
+                "; {} unrelated servers all report {!r}, which is the version of "
+                "the SDK they are built on rather than their own".format(
+                    len(set(sum(echoed.values(), []))), sorted(echoed)[0])
+                if echoed else ""),
+            affected=[{"server": s.key, "tool": ""} for s in misreporting],
+            evidence={"servers": seen_claims},
         ))
 
     shadowed = all_shadowed(contexts)

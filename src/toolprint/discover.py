@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
-from . import auth, registry
+from . import auth, installed, registry
 from .model import CollectionError, Inventory, Server
 
 # Config keys that mark a server as switched off, across clients.
@@ -155,6 +155,7 @@ def parse_server(
         has_oauth=has_oauth,
         enabled=enabled,
         version_pinned=version_is_pinned(args),
+        installed_versions=installed.versions_on_disk(command, args),
         auth_method=auth_method,
         secret_locations=secrets,
         parse_notes=notes + auth_notes,

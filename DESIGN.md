@@ -99,28 +99,36 @@ specific explanation would never print. All are the same severity, so nothing is
 under-reported — the reader gets "invisible characters appeared" instead of "the
 text changed", which is the difference between a finding and a diff.
 
-## The version is read from the wire, and it is a claim
+## Two answers about versions, and neither alone is enough
 
 `npx -y pkg` does not mean "the latest release". It means "whatever the package
 manager last cached, else fetch". A cache on one machine held a March 2025 build
 while a clean CI runner fetched the August 2026 release of the same unpinned
 spec — eighteen months apart, identical configuration, nothing reporting it.
 
-So the version is taken from what the server says about itself:
-`io.modelcontextprotocol/serverInfo` in `_meta` on `2026-07-28`, or the
-`initialize` result on older revisions.
+**What the server says.** `io.modelcontextprotocol/serverInfo` in `_meta` on
+`2026-07-28`, or the `initialize` result on older revisions. This is a claim,
+and across 29 public npm-backed servers **16 made a claim that did not match
+their published package**. Several are a year stale, one is the literal string
+`0.8.x`, and several Python servers report the version of the official SDK they
+are built on — three unrelated servers all announcing `1.29.1`, which is a real
+release of `mcp`, not of any of them.
 
-**That is a claim, not a measurement.** Measured across 29 public npm-backed
-servers, **16 reported a version that did not match their published package** —
-several a year stale, one the literal string `0.8.x`, one the version of a
-bundled dependency rather than the server. Reconciling the two needs either a
-package registry, which breaks the offline guarantee, or the installed package
-metadata, which is not read yet.
+**What is on disk.** The package manager's own cache: `~/.npm/_npx/<hash>/`,
+whose top-level `package.json` records the spec the directory was created for,
+and `~/.cache/uv/archive-v0/*/<name>-<version>.dist-info`. Reading these needs
+no connection, so it stays inside the offline guarantee and works under
+`--no-connect`.
 
-`HYG-005` therefore reports two separate things: that a config pins no version,
-which is a fact about the config; and what each server claims to be, which is
-worth knowing and worth distrusting. It does not tell you whether a version is
-current, because that answer is not available offline.
+Neither is sufficient. The claim can be wrong; the cache can hold several
+versions, in which case which one ran is genuinely ambiguous and every version
+found is reported rather than one being picked. A package never run on this
+machine has no cached copy at all, and absence of evidence is reported as
+absence rather than as a finding.
+
+`HYG-005` reports that a config pins nothing. `HYG-006` reports a server whose
+claim is not among the versions on disk — a bug in that server, and a reason to
+distrust the field generally.
 
 ## Baselines record the platform they were taken on
 
