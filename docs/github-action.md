@@ -68,6 +68,11 @@ git add .toolprint-baseline.json && git commit -m "Approve MCP tool surface"
 Exit `3` means the baseline is missing or was written by a different
 heuristics version — treat that as "needs re-approval", not as a pass.
 
+`check` also fails when it could not reach enough of the baselined servers
+(`--min-coverage`, default 80%). Unreachable servers produce no drift, so
+without that gate a run during an outage reports zero changes and passes having
+verified almost nothing.
+
 ## About `connect`
 
 By default the action reads configuration only: no network, no subprocesses.

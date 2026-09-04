@@ -562,3 +562,37 @@ class TestServerVersionCapture(unittest.TestCase):
         record = bl.build(Inventory(servers=[server]))["servers"]["s@stdio:npx"]
         self.assertEqual(record["server_version"], "1.2.1")
         self.assertFalse(record["version_pinned"])
+
+
+class TestCoverageGate(unittest.TestCase):
+    """A check that could not reach the servers has not verified anything.
+
+    Unreachable servers produce no drift, because a server missing from one side
+    is skipped rather than compared. Observed live: an npm incident left 22 of 36
+    servers unable to start, the check reported zero changes, and it exited
+    clean. A green build that verified 39% of the surface is worse than a red
+    one, because nobody looks again.
+    """
+
+    def test_unreachable_servers_produce_no_drift(self):
+        # The behaviour that makes the gate necessary, pinned so it stays visible.
+        document = {"servers": snapshot_of([tool("a"), tool("b")])}
+        self.assertEqual(drift.compare(document, {}), [])
+
+    def test_dropped_lists_what_was_not_reached(self):
+        document = {"servers": snapshot_of([tool("a")])}
+        self.assertEqual(bl.dropped(document, {}), ["s@stdio:npx"])
+
+    def test_coverage_is_reported_in_the_text_output(self):
+        from toolprint import cli
+
+        out = cli._render_changes([], [], "b.json", (), ("gone@stdio:npx",),
+                                  None, 39.0, 14, 36)
+        self.assertIn("Reached 14 of 36", out)
+        self.assertIn("invisible to this run", out)
+
+    def test_full_coverage_says_nothing(self):
+        from toolprint import cli
+
+        out = cli._render_changes([], [], "b.json", (), (), None, 100.0, 36, 36)
+        self.assertNotIn("invisible to this run", out)

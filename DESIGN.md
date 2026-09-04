@@ -132,6 +132,22 @@ mode for a worse one.
 
 The practical advice is simpler: baseline in the environment you check from.
 
+## A check that reached nothing is not a pass
+
+Unreachable servers produce no drift: a server missing from one side of the
+comparison is skipped rather than reported, because a server appearing or
+disappearing is inventory rather than a definition change.
+
+That is correct in isolation and dangerous in CI. During an npm incident, 22 of
+36 watched servers failed to start, `check` reported **zero changes**, and it
+exited clean. A green build that verified 39% of the surface is worse than a red
+one, because nobody looks again.
+
+`check` now measures coverage — baselined servers actually reached — and fails
+below `--min-coverage` (default 80%). The message says the run is
+**inconclusive**, not that nothing changed. `--min-coverage 0` disables it for
+callers doing their own accounting.
+
 ## Exceptions require a reason and an expiry
 
 A suppression that cannot lapse becomes permanent by neglect, and then nobody

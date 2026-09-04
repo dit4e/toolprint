@@ -109,6 +109,11 @@ def build_parser() -> argparse.ArgumentParser:
             cmd.add_argument("--format", choices=["text", "json", "sarif"], default="text")
             cmd.add_argument("--fail-on", choices=library.SEVERITIES + ["none"],
                              default="high", metavar="LEVEL")
+            cmd.add_argument("--min-coverage", type=float, default=80.0, metavar="PCT",
+                             help="fail when fewer than PCT%% of baselined servers "
+                                  "could be reached (default 80; 0 disables). A check "
+                                  "that could not reach the servers has not verified "
+                                  "that nothing changed")
             cmd.add_argument("--out", metavar="PATH")
             cmd.add_argument("--findings", metavar="PATH",
                              help="write findings.json with the drift block populated")
@@ -339,6 +344,15 @@ def cmd_check(args: argparse.Namespace) -> int:
     new_servers = sorted(set(current) - set(document.get("servers") or {}))
     gone_servers = baseline_mod.dropped(document, current)
 
+    # Unreachable servers produce no drift, because a server missing from one
+    # side is skipped rather than compared. So a run that reached almost nothing
+    # reports zero changes and exits clean - a green build that verified nothing,
+    # which is worse than a red one. Observed live: 22 of 36 servers failed to
+    # start during an npm incident and the check passed.
+    baselined = len(document.get("servers") or {})
+    reached = baselined - len(gone_servers)
+    coverage = (100.0 * reached / baselined) if baselined else 100.0
+
     if args.findings or args.html:
         generated_at = datetime.datetime.now(datetime.timezone.utc).strftime(
             "%Y-%m-%dT%H:%M:%SZ")
@@ -359,18 +373,30 @@ def cmd_check(args: argparse.Namespace) -> int:
             "changes": [_change_dict(c) for c in changes],
             "new_servers": new_servers,
             "unwatched_or_unreachable": gone_servers,
+            "baselined_servers": baselined,
+            "servers_reached": reached,
+            "coverage_pct": round(coverage, 1),
             "expired_exceptions": expired,
         }, indent=2) + "\n"
     else:
         output = _render_changes(changes, expired, args.baseline,
                                  new_servers, gone_servers,
-                                 recorded_platform) + "\n"
+                                 recorded_platform, coverage, reached, baselined) + "\n"
 
     if args.out:
         Path(args.out).write_text(output, encoding="utf-8")
         sys.stderr.write("wrote {}\n".format(args.out))
     else:
         sys.stdout.write(output)
+
+    if args.min_coverage > 0 and coverage < args.min_coverage:
+        sys.stderr.write(
+            "Only {}/{} baselined servers were reachable ({:.0f}%, below the {:.0f}% "
+            "minimum).\nUnreachable servers produce no drift, so this run has not "
+            "verified that nothing\nchanged - it has verified almost nothing. Treat "
+            "it as inconclusive, not as a pass.\n".format(
+                reached, baselined, coverage, args.min_coverage))
+        return EXIT_FINDINGS
 
     if args.fail_on != "none":
         triggered = [c for c in changes
@@ -471,8 +497,14 @@ def _change_dict(change) -> dict:
 
 
 def _render_changes(changes, expired, path: str, new_servers=(), gone_servers=(),
-                    recorded_platform=None) -> str:
+                    recorded_platform=None, coverage=None, reached=None,
+                    baselined=None) -> str:
     lines = ["{} {} — drift against {}".format(TOOL_NAME, __version__, path), ""]
+    if coverage is not None and baselined and coverage < 100.0:
+        lines.append("  Reached {} of {} baselined servers ({:.0f}%). Unreachable servers".format(
+            reached, baselined, coverage))
+        lines.append("  produce no drift, so anything they changed is invisible to this run.")
+        lines.append("")
     if recorded_platform and recorded_platform != sys.platform:
         lines.append("  Baseline recorded on {}; checking on {}. A description-only".format(
             recorded_platform, sys.platform))
