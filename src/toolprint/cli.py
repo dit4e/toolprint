@@ -132,6 +132,12 @@ def build_parser() -> argparse.ArgumentParser:
                                   "default approves everything currently drifting")
             cmd.add_argument("--by", metavar="WHO")
             cmd.add_argument("--note", metavar="TEXT")
+            cmd.add_argument("--refresh", action="store_true",
+                             help="re-record every server from the current live "
+                                  "state, not only the ones that drifted. Use after "
+                                  "a toolprint upgrade adds fields an older baseline "
+                                  "does not carry. This accepts any outstanding drift, "
+                                  "so read the check output first")
 
     sub.add_parser("clients", help="list the client config locations this build knows about")
 
@@ -430,6 +436,28 @@ def cmd_approve(args: argparse.Namespace) -> int:
     current = baseline_mod.snapshot(inventory)
     active, _ = baseline_mod.active_exceptions(document)
     changes = drift.compare(document, current, _live_tools(inventory), active)
+
+    if args.refresh:
+        # A baseline written by an older build carries older fields. server_version
+        # arrived in 0.2.0 and stayed empty on existing baselines, because approve
+        # only rewrites servers that drifted and there had been no drift. Refresh
+        # re-records everything, which necessarily accepts any outstanding drift -
+        # hence the explicit flag rather than doing it silently on a version change.
+        stamp = baseline_mod.now()
+        for identity, record in current.items():
+            document.setdefault("servers", {})[identity] = record
+        document["generator"] = "toolprint/{}".format(__version__)
+        document["heuristics_version"] = effects.HEURISTICS_VERSION
+        document["approved_at"] = stamp
+        document["approved_by"] = args.by
+        baseline_mod.save(args.baseline, document)
+        sys.stderr.write(
+            "refreshed {} server record(s) into {}{}\n".format(
+                len(current), args.baseline,
+                "; this accepted {} outstanding change(s)".format(len(changes))
+                if changes else ""))
+        return EXIT_OK
+
     if not changes and not baseline_mod.adopt_new(dict(document), current):
         sys.stderr.write("Nothing to approve: no drift against {}.\n".format(args.baseline))
         return EXIT_OK

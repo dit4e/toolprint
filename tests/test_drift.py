@@ -596,3 +596,30 @@ class TestCoverageGate(unittest.TestCase):
 
         out = cli._render_changes([], [], "b.json", (), (), None, 100.0, 36, 36)
         self.assertNotIn("invisible to this run", out)
+
+
+class TestBaselineRefresh(unittest.TestCase):
+    """A baseline written by an older build carries older fields.
+
+    server_version arrived in 0.2.0 and stayed empty on existing baselines,
+    because approve only rewrites the servers that drifted and there had been no
+    drift. The field was present in the code, absent from the data, and nothing
+    reported the gap.
+    """
+
+    def test_refresh_rewrites_every_record_not_only_drifted_ones(self):
+        old = {"baseline_version": 1, "generator": "toolprint/0.1.0",
+               "servers": snapshot_of([tool("a")]), "exceptions": []}
+        # An older record, missing the newer field entirely.
+        old["servers"]["s@stdio:npx"]["tools"]["a"].pop("schema_shape", None)
+        fresh = snapshot_of([tool("a")])
+        for identity, record in fresh.items():
+            old["servers"][identity] = record
+        self.assertIn("schema_shape", old["servers"]["s@stdio:npx"]["tools"]["a"])
+
+    def test_a_quiet_baseline_is_still_stale(self):
+        """No drift does not mean nothing needs writing."""
+        document = {"servers": snapshot_of([tool("a")])}
+        current = snapshot_of([tool("a")])
+        self.assertEqual(drift.compare(document, current), [])
+        self.assertEqual(bl.adopt_new(dict(document), current), [])
