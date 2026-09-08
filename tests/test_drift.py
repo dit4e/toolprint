@@ -564,6 +564,132 @@ class TestServerVersionCapture(unittest.TestCase):
         self.assertFalse(record["version_pinned"])
 
 
+class TestAnnotationChangesThatRevokeNothing(unittest.TestCase):
+    """chrome-devtools 1.9.0 added `conditions: ["javascriptEvaluation"]` to
+    evaluate_script and kept `readOnlyHint: false` exactly as it was.
+
+    The catch-all reported that as DRIFT-002 "Safety annotation revoked",
+    critical, with an empty evidence object - a vendor adding a metadata key,
+    ranked alongside a tool that had gained the ability to delete. The rule now
+    fires only when a guarantee was actually withdrawn.
+    """
+
+    def only(self, changes):
+        self.assertEqual(len(changes), 1, changes)
+        return changes[0]
+
+    def test_vendor_key_added_is_low_and_not_a_revocation(self):
+        change = self.only(compare(
+            [tool("evaluate_script", annotations={"category": "debugging",
+                                                  "readOnlyHint": False})],
+            [tool("evaluate_script", annotations={"category": "debugging",
+                                                  "conditions": ["javascriptEvaluation"],
+                                                  "readOnlyHint": False})]))
+        self.assertEqual((change.rule, change.severity), ("DRIFT-012", "low"))
+        self.assertIn("conditions", change.detail)
+
+    def test_the_evidence_names_the_keys(self):
+        change = self.only(compare(
+            [tool("act", annotations={"category": "a"})],
+            [tool("act", annotations={"category": "b"})]))
+        self.assertEqual(change.evidence["vendor_changes"],
+                         ['category changed from "a" to "b"'])
+        self.assertEqual(change.evidence["hint_changes"], [])
+
+    def test_a_hint_relaxed_outranks_a_vendor_key(self):
+        change = self.only(compare(
+            [tool("act", annotations={"readOnlyHint": False})],
+            [tool("act", annotations={"readOnlyHint": True})]))
+        self.assertEqual((change.rule, change.severity), ("DRIFT-011", "medium"))
+
+    def test_a_real_revocation_is_still_critical(self):
+        change = self.only(compare(
+            [tool("purge", annotations={"destructiveHint": False, "category": "x"})],
+            [tool("purge", annotations={"destructiveHint": True, "category": "y"})]))
+        self.assertEqual((change.rule, change.severity), ("DRIFT-002", "critical"))
+
+    def test_a_record_holding_only_hints_says_so_instead_of_guessing(self):
+        """Baselines written before 0.3.1 stored four keys, so a vendor key in
+        the new record may always have been there. Saying it was added would
+        read a routine release as tampering."""
+        old = bl.tool_record(tool("act", annotations={"readOnlyHint": False}))
+        old["annotations"] = {"readOnlyHint": False}      # as an older build wrote it
+        old["annotations_hash"] = "stale"
+        new = bl.tool_record(tool("act", annotations={"category": "debugging",
+                                                      "readOnlyHint": False}))
+        change = drift._classify_tool("s@stdio:npx", "act", old, new, None, [])
+        self.assertEqual(change.rule, "DRIFT-012")
+        self.assertTrue(change.evidence["partial_record"])
+        self.assertIn("cannot be compared", change.detail)
+
+    def test_the_full_annotations_are_recorded(self):
+        record = bl.tool_record(tool("act", annotations={"readOnlyHint": True,
+                                                         "category": "debugging"}))
+        self.assertEqual(dict(record["annotations"]),
+                         {"category": "debugging", "readOnlyHint": True})
+
+
+class TestServerVersionIsComparedAndNotFrozen(unittest.TestCase):
+    """chrome-devtools went 1.8.0 -> 1.9.0 and the baseline kept saying 1.8.0.
+
+    Approving a tool rewrote that tool's record and nothing else, so the
+    baseline ended up holding one release's version beside the next release's
+    hashes - the signature of a package republished under a version it had
+    already used, manufactured rather than observed. Nor was the upgrade
+    reported: server_version was collected but never compared, so the one fact
+    that explained all three findings never reached the report.
+    """
+
+    def snapshot(self, tools, version):
+        from toolprint import canonical
+
+        return {"s@stdio:npx": dict(
+            canonical.hash_server(tools, "i"), transport="stdio", auth_method="none",
+            server_version=version, version_pinned=False,
+            tools={t["name"]: bl.tool_record(t) for t in tools})}
+
+    def compare(self, before, after, was, now):
+        return drift.compare({"servers": self.snapshot(before, was)},
+                             self.snapshot(after, now), {}, ())
+
+    def test_a_version_change_is_reported(self):
+        changes = self.compare([tool("a")], [tool("a")], "1.8.0", "1.9.0")
+        self.assertEqual([c.rule for c in changes], ["DRIFT-013"])
+        self.assertIn("1.8.0 -> 1.9.0", changes[0].detail)
+
+    def test_it_accompanies_rather_than_replaces_the_tool_findings(self):
+        changes = self.compare([tool("a", "Old text")], [tool("a", "New text")],
+                               "1.8.0", "1.9.0")
+        self.assertEqual(sorted(c.rule for c in changes), ["DRIFT-003", "DRIFT-013"])
+
+    def test_an_unknown_version_on_either_side_stays_quiet(self):
+        """Servers that report no version, and baselines taken without
+        connecting, would otherwise flap on every run."""
+        for was, now in (("1.8.0", None), (None, "1.9.0"), (None, None)):
+            self.assertEqual(self.compare([tool("a")], [tool("a")], was, now), [])
+
+    def test_approving_a_tool_no_longer_freezes_the_version(self):
+        before, after = [tool("a", "Old text")], [tool("a", "New text")]
+        document = {"baseline_version": bl.BASELINE_VERSION, "generator": "toolprint/test",
+                    "servers": self.snapshot(before, "1.8.0")}
+        current = self.snapshot(after, "1.9.0")
+        changes = drift.compare(document, current, {}, ())
+
+        # Replay what approve does: server-level changes carry the server fields.
+        for change in changes:
+            stored = document["servers"][change.server]
+            if change.tool is None:
+                for key in ("instructions_hash", "toolset_hash", "transport",
+                            "auth_method", "server_version", "version_pinned"):
+                    if key in current[change.server]:
+                        stored[key] = current[change.server][key]
+            else:
+                stored["tools"][change.tool] = dict(current[change.server]["tools"][change.tool])
+
+        self.assertEqual(document["servers"]["s@stdio:npx"]["server_version"], "1.9.0")
+        self.assertEqual(drift.compare(document, current, {}, ()), [])
+
+
 class TestCoverageGate(unittest.TestCase):
     """A check that could not reach the servers has not verified anything.
 

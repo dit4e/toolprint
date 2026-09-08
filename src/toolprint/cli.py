@@ -486,7 +486,8 @@ def cmd_approve(args: argparse.Namespace) -> int:
         live = current.get(change.server) or {}
 
         if change.tool is None:
-            for key in ("instructions_hash", "toolset_hash", "transport", "auth_method"):
+            for key in ("instructions_hash", "toolset_hash", "transport", "auth_method",
+                        "server_version", "version_pinned"):
                 if key in live:
                     stored[key] = live[key]
         else:
@@ -513,6 +514,20 @@ def cmd_approve(args: argparse.Namespace) -> int:
                        ("{}/{}".format(c.server, c.tool) if c.tool else c.server) not in approved]
         if not outstanding and identity in current:
             document["servers"][identity]["toolset_hash"] = current[identity]["toolset_hash"]
+
+    # A version the baseline never recorded is backfilled rather than reported.
+    # There is nothing to approve: no claim is being replaced, and DRIFT-013
+    # deliberately stays quiet when either side is unknown, so without this the
+    # field would stay empty until someone ran --refresh. A version that *is*
+    # recorded and changed is a finding, and moves only when that finding is
+    # approved - above, through the server-level branch.
+    for identity, record in current.items():
+        stored = (document.get("servers") or {}).get(identity)
+        if stored is None or stored.get("server_version"):
+            continue
+        for key in ("server_version", "version_pinned"):
+            if key in record:
+                stored[key] = record[key]
 
     adopted = baseline_mod.adopt_new(document, current, stamp)
     document["approved_at"] = stamp

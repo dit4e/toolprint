@@ -69,12 +69,13 @@ def tool_record(tool: Dict[str, Any]) -> Dict[str, Any]:
     record = OrderedDict(sorted(hashes.items()))
     record["effect"] = classified["effect"]
     record["declared_ceiling"] = classified["declared_ceiling"]
-    record["annotations"] = {
-        key: tool.get("annotations", {}).get(key)
-        for key in ("readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint")
-        if isinstance(tool.get("annotations"), dict)
-        and key in tool.get("annotations", {})
-    }
+    # Every annotation, not just the four safety hints. annotations_hash has
+    # always covered the whole object, so storing a subset meant a hash could
+    # move with nothing in the record to explain it - and the drift report had
+    # to say "annotations changed" and stop there.
+    annotations = tool.get("annotations")
+    record["annotations"] = (
+        OrderedDict(sorted(annotations.items())) if isinstance(annotations, dict) else {})
     record["schema_shape"] = _schema_shape(tool.get("inputSchema"))
     return record
 

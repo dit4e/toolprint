@@ -1,4 +1,9 @@
-"""Drift classification. Ten rules, checked in order; the first match wins.
+"""Drift classification. Thirteen rules, checked in order; the first match wins.
+
+Rule ids are stable - exceptions reference them - so they are assigned in the
+order the rules were written, and the RULES list below is ordered by precedence.
+The two stopped coinciding once rules were added, so read the list, not the
+numbers.
 
 The ordering is the design. Rule 3 - description changed while schema did not -
 sits above the schema rules because it is the rug-pull signature: an attacker
@@ -12,6 +17,7 @@ exception without an expiry date does not exist: see baseline.py.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -28,8 +34,11 @@ RULES = [
     ("DRIFT-006", MEDIUM, "Breaking schema change"),
     ("DRIFT-007", MEDIUM, "New tool appeared"),
     ("DRIFT-008", MEDIUM, "Server instructions changed"),
+    ("DRIFT-011", MEDIUM, "Safety annotation added or relaxed"),
     ("DRIFT-009", LOW, "Additive schema change"),
     ("DRIFT-010", LOW, "Tool removed"),
+    ("DRIFT-012", LOW, "Tool annotations changed"),
+    ("DRIFT-013", LOW, "Server version changed"),
 ]
 RULE_TITLE = {rid: title for rid, _, title in RULES}
 RULE_SEVERITY = {rid: sev for rid, sev, _ in RULES}
@@ -57,6 +66,16 @@ REMEDIATION = {
                  "routine release; approve to silence.",
     "DRIFT-010": "A tool disappeared from an approved server. Confirm it was retired "
                  "deliberately rather than failing to load.",
+    "DRIFT-011": "A safety hint changed without being revoked - most often a tool "
+                 "newly claiming to be read-only or non-destructive. That is also how "
+                 "a rug pull lowers a reviewer's guard, so confirm the claim matches "
+                 "what the tool now does.",
+    "DRIFT-012": "An annotation outside the four safety hints changed. Vendors use "
+                 "these to gate and categorise tools, so it is usually a release "
+                 "detail - but it is text the client reads, so check what moved.",
+    "DRIFT-013": "The server reported a different version than the baseline recorded. "
+                 "Usually the explanation for every other change on this server; if "
+                 "there are none, an upgrade landed with an identical tool surface.",
 }
 
 
@@ -72,6 +91,11 @@ class Change:
     excepted: Optional[Dict[str, Any]] = None
 
 
+# The four hints the spec defines. Everything else in an annotations object is a
+# vendor extension: real, and worth reporting, but not a safety claim.
+HINT_KEYS = ("readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint")
+
+
 def _annotation_revoked(old: Dict[str, Any], new: Dict[str, Any]) -> Optional[str]:
     old_ann, new_ann = old.get("annotations") or {}, new.get("annotations") or {}
     if old_ann.get("readOnlyHint") is True and new_ann.get("readOnlyHint") is False:
@@ -79,6 +103,36 @@ def _annotation_revoked(old: Dict[str, Any], new: Dict[str, Any]) -> Optional[st
     if old_ann.get("destructiveHint") is False and new_ann.get("destructiveHint") is True:
         return "destructiveHint changed from false to true"
     return None
+
+
+def _annotation_delta(old: Dict[str, Any], new: Dict[str, Any]) -> Dict[str, Any]:
+    """Key-level annotation diff, split into safety hints and everything else.
+
+    Baselines written before 0.3.1 stored only the four hints, so a vendor key
+    present in the new record cannot be told apart from one that was always
+    there and simply never written down. That case is reported as indeterminate
+    rather than as an addition - claiming a key is new when the record cannot
+    show that is how a routine release gets read as tampering.
+    """
+    old_ann = old.get("annotations") or {}
+    new_ann = new.get("annotations") or {}
+    hints_only = set(old_ann) <= set(HINT_KEYS)
+    partial = hints_only and not set(new_ann) <= set(HINT_KEYS)
+
+    hints, vendor = [], []
+    for key in sorted(set(old_ann) | set(new_ann)):
+        was, now = old_ann.get(key), new_ann.get(key)
+        if was == now and key in old_ann and key in new_ann:
+            continue
+        if key not in old_ann:
+            phrase = "{} added as {}".format(key, json.dumps(now))
+        elif key not in new_ann:
+            phrase = "{} removed (was {})".format(key, json.dumps(was))
+        else:
+            phrase = "{} changed from {} to {}".format(key, json.dumps(was), json.dumps(now))
+        (hints if key in HINT_KEYS else vendor).append(phrase)
+
+    return {"hint_changes": hints, "vendor_changes": vendor, "partial_record": partial}
 
 
 def _schema_delta(old: Dict[str, Any], new: Dict[str, Any]) -> Dict[str, List[str]]:
@@ -182,7 +236,19 @@ def _classify_tool(server: str, name: str, old: Dict[str, Any], new: Dict[str, A
         return make("DRIFT-009", "schema changed without a shape-level difference", **delta)
 
     if old.get("annotations_hash") != new.get("annotations_hash"):
-        return make("DRIFT-002", "annotations changed")
+        # Reaching here means _annotation_revoked already returned None, so no
+        # safety guarantee was withdrawn - which is what DRIFT-002 says happened.
+        # Reporting it as such made every vendor annotation a critical finding
+        # with nothing in the evidence to argue with.
+        delta = _annotation_delta(old, new)
+        detail = "; ".join((delta["hint_changes"] + delta["vendor_changes"])[:4])
+        if delta["partial_record"]:
+            detail = (detail + "; " if detail else "") + (
+                "the baseline recorded only safety hints, so other keys cannot be "
+                "compared")
+        if delta["hint_changes"]:
+            return make("DRIFT-011", detail or "a safety hint changed", **delta)
+        return make("DRIFT-012", detail or "annotations changed", **delta)
     return None
 
 
@@ -217,6 +283,19 @@ def compare(baseline_doc: Dict[str, Any], current: Dict[str, Any],
             changes.append(Change("DRIFT-008", RULE_SEVERITY["DRIFT-008"],
                                   RULE_TITLE["DRIFT-008"], identity, None,
                                   "server instruction string changed"))
+
+        # A version bump is the ordinary explanation for every other change on
+        # this server, and it was being collected but never compared - so a
+        # routine upgrade arrived as a set of unexplained tool findings. Only
+        # reported when both versions are known: a server that does not report
+        # one, or was baselined without connecting, would otherwise flap.
+        old_version, new_version = (old_server.get("server_version"),
+                                    new_server.get("server_version"))
+        if old_version and new_version and old_version != new_version:
+            changes.append(Change("DRIFT-013", RULE_SEVERITY["DRIFT-013"],
+                                  RULE_TITLE["DRIFT-013"], identity, None,
+                                  "server version {} -> {}".format(old_version, new_version),
+                                  {"was": old_version, "now": new_version}))
 
         old_tools = old_server.get("tools") or {}
         new_tools = new_server.get("tools") or {}

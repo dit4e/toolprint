@@ -69,13 +69,19 @@ toolprint check --connect --fail-on high
 toolprint approve --tool contact_delete --by "$USER" --note "expected in 4.2"
 ```
 
-Ten rules, most severe first: effect-class escalation and revoked safety
+Thirteen rules, most severe first: effect-class escalation and revoked safety
 annotations are `critical`; a description that changed while its schema did not
 is `high`, because that is the rug-pull signature — an attacker rewriting a
 tool's instructions has to leave the schema alone or the tool stops working.
 Invisible characters and cross-server references appearing in text are `high`
-too. Breaking schema changes and new tools are `medium`; additive changes and
-removals are `low`.
+too. Breaking schema changes, new tools and safety hints that changed without
+being revoked are `medium`; additive changes, removals, vendor annotations and
+version bumps are `low`.
+
+A revoked annotation means a guarantee was withdrawn — `readOnlyHint` going
+false, or `destructiveHint` going true. An annotation that merely *changed* is
+not that, and reporting it as though it were made every vendor metadata key a
+`critical` finding. Those are reported separately, with the keys named.
 
 **Baselines refuse to bless a suspicious state.** Trust-on-first-use means a
 baseline approves whatever is in front of it, so `baseline` inspects the current
