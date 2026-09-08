@@ -444,8 +444,27 @@ def cmd_approve(args: argparse.Namespace) -> int:
         # re-records everything, which necessarily accepts any outstanding drift -
         # hence the explicit flag rather than doing it silently on a version change.
         stamp = baseline_mod.now()
+        # first_observed is the one field the live snapshot cannot supply: it
+        # answers "since when have we been watching this", which only the
+        # baseline remembers. Replacing the record wholesale therefore erased
+        # it on every refresh, and a refresh happens on every version bump.
+        # Losing it makes a server watched since week one look brand new, so
+        # any per-server rate computed afterwards divides by the wrong window.
+        servers = document.setdefault("servers", {})
+        undated = []
         for identity, record in current.items():
-            document.setdefault("servers", {})[identity] = record
+            previous = servers.get(identity)
+            if previous is None:
+                record["first_observed"] = stamp      # genuinely new: today
+            elif previous.get("first_observed"):
+                record["first_observed"] = previous["first_observed"]
+            else:
+                # Damaged by an earlier refresh. Not reconstructable from the
+                # baseline, and guessing would either age the server or make it
+                # newborn - both silently wrong in a field whose whole purpose
+                # is to be trusted. Left absent and reported.
+                undated.append(identity)
+            servers[identity] = record
         document["generator"] = "toolprint/{}".format(__version__)
         document["heuristics_version"] = effects.HEURISTICS_VERSION
         # The refreshed records were captured here, so the platform stamp has to
@@ -461,6 +480,14 @@ def cmd_approve(args: argparse.Namespace) -> int:
                 len(current), args.baseline,
                 "; this accepted {} outstanding change(s)".format(len(changes))
                 if changes else ""))
+        if undated:
+            sys.stderr.write(
+                "  {} server(s) carry no first_observed date, dropped by a refresh "
+                "before this fix: {}\n"
+                "  It cannot be recovered from the baseline. Read it from the "
+                "history of this file, or set it by hand if you know it.\n".format(
+                    len(undated), ", ".join(i.split("@")[0] for i in undated[:6])
+                    + (", ..." if len(undated) > 6 else "")))
         return EXIT_OK
 
     if not changes and not baseline_mod.adopt_new(dict(document), current):

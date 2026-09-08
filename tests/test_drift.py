@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import shutil
 import sys
@@ -749,6 +750,93 @@ class TestBaselineRefresh(unittest.TestCase):
         current = snapshot_of([tool("a")])
         self.assertEqual(drift.compare(document, current), [])
         self.assertEqual(bl.adopt_new(dict(document), current), [])
+
+
+class TestRefreshKeepsFirstObserved(unittest.TestCase):
+    """A refresh used to erase the one field the live surface cannot supply.
+
+    first_observed answers "since when have we been watching this", which only
+    the baseline remembers - a server is not asked. Refresh replaced each
+    record wholesale with the snapshot, so the field went with it, and a
+    refresh happens on every version bump. It vanished from the public watch
+    corpus at the 0.1.0 -> 0.2.2 refresh and nothing noticed for four days,
+    because the only thing that reads it prints "?" when it is missing.
+
+    These drive cmd_approve itself. The earlier refresh tests replayed the
+    logic inline, which is exactly why a field the real function dropped went
+    on passing.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.path = str(Path(self.dir) / "baseline.json")
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+
+    def server(self, name="s", tools=("a",)):
+        s = Server(name=name, client="c", scope="user", scope_detail=None,
+                   source_path="/p", transport="stdio", command="npx")
+        s.fetch_status, s.tools = "ok", [tool(t) for t in tools]
+        return s
+
+    def refresh(self, inventory):
+        """Run the real approve --refresh against self.path."""
+        import argparse
+
+        from toolprint import cli
+
+        args = argparse.Namespace(baseline=self.path, refresh=True, by="test",
+                                  note=None, tool=[], yes=True, config=None)
+        original = cli._collect_live
+        cli._collect_live = lambda a: (inventory, None, True)
+        try:
+            return cli.cmd_approve(args)
+        finally:
+            cli._collect_live = original
+
+    def test_the_original_date_survives_a_refresh(self):
+        inventory = Inventory(servers=[self.server()])
+        document = bl.build(inventory, approved_by="test")
+        first = document["servers"]["s@stdio:npx"]["first_observed"]
+        bl.save(self.path, document)
+
+        self.refresh(Inventory(servers=[self.server(tools=("a", "b"))]))
+
+        after = json.loads(Path(self.path).read_text())["servers"]["s@stdio:npx"]
+        self.assertEqual(after["first_observed"], first)
+        self.assertIn("b", after["tools"])          # the refresh did happen
+
+    def test_a_server_new_at_refresh_is_dated_today(self):
+        bl.save(self.path, bl.build(Inventory(servers=[self.server()]), approved_by="t"))
+        self.refresh(Inventory(servers=[self.server(), self.server(name="fresh")]))
+
+        servers = json.loads(Path(self.path).read_text())["servers"]
+        self.assertTrue(servers["fresh@stdio:npx"]["first_observed"])
+
+    def test_a_record_already_missing_the_date_is_not_invented(self):
+        """Guessing would either age the server or make it newborn, and both
+        are silently wrong in a field whose whole purpose is to be trusted."""
+        document = bl.build(Inventory(servers=[self.server()]), approved_by="t")
+        del document["servers"]["s@stdio:npx"]["first_observed"]   # as 0.2.2 left it
+        bl.save(self.path, document)
+
+        self.refresh(Inventory(servers=[self.server()]))
+
+        after = json.loads(Path(self.path).read_text())["servers"]["s@stdio:npx"]
+        self.assertNotIn("first_observed", after)
+
+    def test_the_missing_date_is_reported_not_swallowed(self):
+        document = bl.build(Inventory(servers=[self.server()]), approved_by="t")
+        del document["servers"]["s@stdio:npx"]["first_observed"]
+        bl.save(self.path, document)
+
+        stderr, sys.stderr = sys.stderr, io.StringIO()
+        try:
+            self.refresh(Inventory(servers=[self.server()]))
+            said = sys.stderr.getvalue()
+        finally:
+            sys.stderr = stderr
+        self.assertIn("first_observed", said)
+        self.assertIn("cannot be recovered", said)
 
 
 class TestRefreshUpdatesTheStamps(unittest.TestCase):
