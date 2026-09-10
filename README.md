@@ -38,7 +38,7 @@ warning.
 | **Capability** | Every tool classified `read` / `write` / `external` / `irreversible` |
 | **Mislabelled tools** | Tools whose safety annotation their own name or schema contradicts |
 | **Auth posture** | `none`, `env_var`, `literal_secret`, `helper_command`, `oauth` |
-| **Hygiene** | Credentials stored literally in config files, shadowed entries, unreachable servers |
+| **Hygiene** | Credentials stored literally in config files, shadowed entries, unreachable servers, tools that dispatch on a free-form command |
 | **Versions** | Which servers your config pins, what each claims to be, and what is actually on disk — read from the package manager's cache, offline. The claim disagrees with the package more often than not |
 
 Findings carry stable ids (`AUTH-001`, `COST-001`, `HYG-002`, …) with fixed
@@ -134,6 +134,25 @@ model.
 
 It composes with scanners that address the first case rather than replacing
 them.
+
+**A tool that takes a free-form command is not characterised by its schema.**
+Some servers advertise routers rather than operations: one tool per service,
+taking an operation name and an unspecified `parameters` object, with the real
+sub-commands discovered at call time. Azure's MCP server routes 64 of its 70
+tools this way; a generic `kubectl` passthrough is the same shape.
+
+Both guarantees weaken there. Effect classification reads names, annotations
+and schemas — never descriptions, which are attacker-controlled prose — and a
+router's say nothing, so eleven Azure tools whose own descriptions advertise
+creating, writing or uploading are classified `read`. And drift compares the
+advertised surface, so any operation behind the router can be added, removed or
+repointed without moving a hash: a quiet result means the router did not
+change, not that its capabilities did not.
+
+`HYG-007` reports these, because a coverage gap you know about is worth more
+than one you do not. Reading the real surface would mean calling the tool with
+`learn=true`, and observing must not have side effects. Pin those servers and
+read the release notes.
 
 ## Install
 

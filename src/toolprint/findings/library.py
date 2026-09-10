@@ -176,6 +176,25 @@ DEFINITIONS: Dict[str, Definition] = {d.id: d for d in [
         "version instead, and report the mismatch to whoever maintains the "
         "server.",
     ),
+    Definition(
+        "HYG-007", HYGIENE,
+        "Tools dispatch on a free-form command, so their real surface is unobserved",
+        "Treat a clean drift result for these servers as covering the router, "
+        "not the operations behind it.",
+        "These tools take an operation name and a free-form object of arguments "
+        "rather than declaring parameters of their own. What they advertise is "
+        "a router; the operations it reaches are discovered at call time and "
+        "never appear in the tool list. Two consequences. Effect classification "
+        "reads names and schemas, and a router's say nothing, so a tool that "
+        "creates and deletes is indistinguishable from one that reads. And "
+        "drift detection compares the advertised surface, so the server can add, "
+        "remove or repoint any operation behind the router without changing "
+        "anything this tool can see - a quiet result means the router did not "
+        "change, not that its capabilities did not. This is usually a token "
+        "optimisation rather than an attempt to hide, but the property is the "
+        "same either way: for these servers the definition is not the contract. "
+        "Pin the version and read the release notes.",
+    ),
 ]}
 
 

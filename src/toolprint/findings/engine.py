@@ -70,6 +70,58 @@ def _make(finding_id: str, severity: str, detail: str, **kwargs) -> Finding:
     )
 
 
+# Names that select an operation rather than describe one. Deliberately short:
+# "endpoint" was in an earlier draft and matched firecrawl_feedback, where it is
+# a URL beside an unrelated metadata bag - a false positive of exactly the kind
+# that makes a report stop being read.
+DISPATCH_NAMES = ("command", "operation", "action", "method", "subcommand")
+
+
+def _is_freeform_object(schema: Any) -> bool:
+    """An object parameter that declares nothing about what goes in it."""
+    if not isinstance(schema, dict) or schema.get("type") != "object":
+        return False
+    if isinstance(schema.get("properties"), dict) and schema["properties"]:
+        return False
+    # `additionalProperties` as a schema constrains the values; as a bare bool
+    # it does not.
+    return not isinstance(schema.get("additionalProperties"), dict)
+
+
+def _is_dispatch_router(tool: Dict[str, Any]) -> bool:
+    """A tool whose arguments are 'which operation' plus 'anything at all'.
+
+    Both halves are required. A free-form object on its own is a common and
+    harmless way to pass options; a string called `command` on its own is
+    usually an enum. Together they are a router, and the operations behind it
+    never reach the tool list.
+    """
+    schema = tool.get("inputSchema")
+    if not isinstance(schema, dict):
+        return False
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        return False
+    selects = any(
+        name.lower().replace("-", "").replace("_", "") in DISPATCH_NAMES
+        and isinstance(spec, dict) and spec.get("type") == "string"
+        for name, spec in properties.items())
+    carries = any(_is_freeform_object(spec) for spec in properties.values())
+    return selects and carries
+
+
+def _dispatch_routers(inventory: Inventory) -> List[Tuple[Server, List[str], int]]:
+    """(server, router tool names, total tools), servers with no routers omitted."""
+    out: List[Tuple[Server, List[str], int]] = []
+    for server in sorted(inventory.servers, key=lambda s: s.key):
+        tools = [t for t in (server.tools or []) if isinstance(t, dict)]
+        names = sorted(str(t.get("name")) for t in tools
+                       if isinstance(t.get("name"), str) and _is_dispatch_router(t))
+        if names:
+            out.append((server, names, len(tools)))
+    return out
+
+
 def _plural(count: int, singular: str, plural: str = "") -> str:
     return "{} {}".format(count, singular if count == 1 else (plural or singular + "s"))
 
@@ -321,6 +373,30 @@ def _hygiene_findings(inventory: Inventory, contexts: Sequence[Context]) -> List
                 if echoed else ""),
             affected=[{"server": s.key, "tool": ""} for s in misreporting],
             evidence={"servers": seen_claims},
+        ))
+
+    routers = _dispatch_routers(inventory)
+    if routers:
+        affected, evidence, worst = [], {}, LOW
+        for server, names, total in routers:
+            affected.extend({"server": server.key, "tool": n} for n in names)
+            evidence[server.key] = {"routers": names, "of": total}
+            # Severity tracks how much of the surface is unobserved, not how
+            # dangerous it is. A server that is mostly routers gives a quiet
+            # drift result that means almost nothing; one router among twenty
+            # leaves the rest of the comparison intact.
+            if total and len(names) * 2 >= total:
+                worst = MEDIUM
+        worst_server, worst_names, worst_total = max(routers, key=lambda r: len(r[1]))
+        found.append(_make(
+            "HYG-007", worst,
+            "{} of {} tools on {} take an operation name and a free-form argument "
+            "object, so what they can do is not in the definition{}.".format(
+                len(worst_names), worst_total, worst_server.name,
+                " ({} other server(s) too)".format(len(routers) - 1)
+                if len(routers) > 1 else ""),
+            affected=affected,
+            evidence={"servers": evidence},
         ))
 
     shadowed = all_shadowed(contexts)

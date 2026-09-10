@@ -25,6 +25,14 @@ SEND_TOOL = {"name": "send_invoice", "description": "Email an invoice",
              "inputSchema": {"type": "object", "properties": {"to": {"type": "string"}}}}
 MISLABELLED_TOOL = {"name": "upload_asset", "description": "Upload an asset",
                     "annotations": {"readOnlyHint": True}}
+# The shape @azure/mcp uses for 64 of its 70 tools: pick an operation, pass it
+# anything. What the operation does is discovered at call time.
+ROUTER_TOOL = {"name": "storage", "description": "Storage operations",
+               "inputSchema": {"type": "object", "required": ["intent"], "properties": {
+                   "intent": {"type": "string"},
+                   "command": {"type": "string"},
+                   "parameters": {"type": "object"},
+                   "learn": {"type": "boolean"}}}}
 
 
 class EngineCase(unittest.TestCase):
@@ -57,6 +65,73 @@ class EngineCase(unittest.TestCase):
 
     def find(self, report, finding_id):
         return [f for f in report.findings if f.id == finding_id][0]
+
+
+class TestDispatchRouters(EngineCase):
+    """A tool whose arguments are "which operation" plus "anything at all".
+
+    Azure's MCP server routes 64 of its 70 tools this way, and the operations
+    behind the router never reach tools/list. Two guarantees quietly stop
+    holding: effect classification reads names and schemas, and a router's say
+    nothing, so 11 of its tools whose descriptions advertise creating, writing
+    or uploading are classified read; and drift compares the advertised
+    surface, so any operation behind the router can change without moving a
+    single hash.
+    """
+
+    def test_a_router_is_reported(self):
+        self.give("claude_code/local/local-github", [ROUTER_TOOL, READ_TOOL])
+        finding = self.find(self.run_engine(), "HYG-007")
+        self.assertEqual([a["tool"] for a in finding.affected], ["storage"])
+
+    def test_a_mostly_router_server_outranks_an_occasional_one(self):
+        """Severity tracks how much of the surface is unobserved. A quiet drift
+        result on a server that is all routers means almost nothing."""
+        self.give("claude_code/local/local-github", [ROUTER_TOOL, READ_TOOL])
+        self.assertEqual(self.find(self.run_engine(), "HYG-007").severity, library.MEDIUM)
+
+        self.give("claude_code/local/local-github",
+                  [ROUTER_TOOL] + [dict(READ_TOOL, name="r%d" % i) for i in range(9)])
+        self.assertEqual(self.find(self.run_engine(), "HYG-007").severity, library.LOW)
+
+    def test_ordinary_tools_are_not_routers(self):
+        self.give("claude_code/local/local-github", [READ_TOOL, DELETE_TOOL, SEND_TOOL])
+        self.assertNotIn("HYG-007", self.ids(self.run_engine()))
+
+    def test_a_free_form_object_alone_is_not_a_router(self):
+        """Passing a bag of options is common and harmless. Only the pairing -
+        an operation selector beside an unspecified payload - is a router."""
+        self.give("claude_code/local/local-github", [{
+            "name": "scrape", "description": "Scrape",
+            "inputSchema": {"type": "object", "properties": {
+                "url": {"type": "string"}, "metadata": {"type": "object"}}}}])
+        self.assertNotIn("HYG-007", self.ids(self.run_engine()))
+
+    def test_a_command_beside_a_specified_object_is_not_a_router(self):
+        """The object says what goes in it, so the surface is still declared."""
+        self.give("claude_code/local/local-github", [{
+            "name": "run", "description": "Run",
+            "inputSchema": {"type": "object", "properties": {
+                "command": {"type": "string"},
+                "opts": {"type": "object", "properties": {"retries": {"type": "integer"}}}}}}])
+        self.assertNotIn("HYG-007", self.ids(self.run_engine()))
+
+    def test_a_url_field_named_endpoint_is_not_a_selector(self):
+        """firecrawl_feedback has `endpoint` beside an unrelated `metadata`
+        bag. An earlier draft of this rule reported it, which is the kind of
+        false positive that stops a report being read."""
+        self.give("claude_code/local/local-github", [{
+            "name": "firecrawl_feedback", "description": "Send feedback",
+            "inputSchema": {"type": "object", "properties": {
+                "endpoint": {"type": "string"}, "metadata": {"type": "object"},
+                "url": {"type": "string"}}}}])
+        self.assertNotIn("HYG-007", self.ids(self.run_engine()))
+
+    def test_the_evidence_says_how_much_of_the_server_is_unobserved(self):
+        self.give("claude_code/local/local-github", [ROUTER_TOOL, READ_TOOL])
+        evidence = self.find(self.run_engine(), "HYG-007").evidence["servers"]
+        entry = evidence["claude_code/local/local-github"]
+        self.assertEqual((entry["routers"], entry["of"]), (["storage"], 2))
 
 
 class TestAuthFindings(EngineCase):
