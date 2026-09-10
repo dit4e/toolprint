@@ -1,4 +1,4 @@
-"""Drift classification. Thirteen rules, checked in order; the first match wins.
+"""Drift classification. Fourteen rules, checked in order; the first match wins.
 
 Rule ids are stable - exceptions reference them - so they are assigned in the
 order the rules were written, and the RULES list below is ordered by precedence.
@@ -21,7 +21,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
-from . import effects, lexical
+from . import effects, lexical, surface
 from .findings.library import CRITICAL, HIGH, LOW, MEDIUM
 
 # Stable rule ids, in precedence order.
@@ -31,6 +31,7 @@ RULES = [
     ("DRIFT-003", HIGH, "Description changed while schema did not"),
     ("DRIFT-004", HIGH, "Suspicious characters newly present"),
     ("DRIFT-005", HIGH, "Description newly references another server's tools"),
+    ("DRIFT-014", HIGH, "Tools moved behind a dispatch router"),
     ("DRIFT-006", MEDIUM, "Breaking schema change"),
     ("DRIFT-007", MEDIUM, "New tool appeared"),
     ("DRIFT-008", MEDIUM, "Server instructions changed"),
@@ -76,6 +77,12 @@ REMEDIATION = {
     "DRIFT-013": "The server reported a different version than the baseline recorded. "
                  "Usually the explanation for every other change on this server; if "
                  "there are none, an upgrade landed with an identical tool surface.",
+    "DRIFT-014": "Tools disappeared in the same release that added a tool taking an "
+                 "operation name and a free-form argument object. Their capability "
+                 "has almost certainly moved behind that router rather than been "
+                 "retired, which means it left the surface this tool can observe: "
+                 "from here, changes to those operations produce no drift. Check "
+                 "what the router reaches before approving, and pin the version.",
 }
 
 
@@ -302,12 +309,40 @@ def compare(baseline_doc: Dict[str, Any], current: Dict[str, Any],
         live = live_tools.get(identity) or {}
         refs = cross_by_server.get(identity, [])
 
-        for name in sorted(set(new_tools) - set(old_tools)):
+        appeared = sorted(set(new_tools) - set(old_tools))
+        retired = sorted(set(old_tools) - set(new_tools))
+
+        # Tools vanishing in the same revision that adds a router is not
+        # retirement, it is relocation: the capability moved somewhere this
+        # tool cannot see. Sentry did exactly this - 15 tools including
+        # create_project, create_team and create_dsn replaced by one
+        # execute_sentry_tool - and it was reported as fifteen low-severity
+        # removals advising the reader to "confirm it was retired
+        # deliberately". Needs the live schema, because a stored record keeps
+        # only property names and types and cannot show that an object
+        # declares nothing about its contents.
+        routers = [n for n in appeared if surface.is_dispatch_router(live.get(n) or {})]
+        if routers and retired:
+            changes.append(Change(
+                "DRIFT-014", RULE_SEVERITY["DRIFT-014"], RULE_TITLE["DRIFT-014"],
+                identity, None,
+                "{} disappeared in the same revision that added {}, which takes an "
+                "operation name and a free-form argument object".format(
+                    "{} tools".format(len(retired)) if len(retired) > 1
+                    else "{!r}".format(retired[0]),
+                    ", ".join(repr(r) for r in routers[:2])),
+                {"router": routers, "gone": retired,
+                 "effects": sorted({old_tools[n].get("effect") for n in retired})}))
+
+        # The per-tool findings stay. They are what `approve` acts on, and
+        # dropping them would leave the relocated tools in the baseline for
+        # good; the finding above is the reading, not a replacement for it.
+        for name in appeared:
             changes.append(Change("DRIFT-007", RULE_SEVERITY["DRIFT-007"],
                                   RULE_TITLE["DRIFT-007"], identity, name,
                                   "tool appeared in an approved server",
                                   {"effect": new_tools[name].get("effect")}))
-        for name in sorted(set(old_tools) - set(new_tools)):
+        for name in retired:
             changes.append(Change("DRIFT-010", RULE_SEVERITY["DRIFT-010"],
                                   RULE_TITLE["DRIFT-010"], identity, name,
                                   "tool no longer advertised"))

@@ -565,6 +565,97 @@ class TestServerVersionCapture(unittest.TestCase):
         self.assertFalse(record["version_pinned"])
 
 
+# execute_sentry_tool as @sentry/mcp-server 0.39.0 actually declares it. The
+# empty `additionalProperties` matters: it constrains nothing, and an earlier
+# draft of the predicate read a bare {} as a specification and let this through.
+SENTRY_EXECUTOR = {
+    "name": "execute_sentry_tool",
+    "description": "Execute a Sentry tool by name.",
+    "inputSchema": {"type": "object", "required": ["name"], "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "arguments": {"type": "object", "default": {},
+                      "propertyNames": {"type": "string"},
+                      "additionalProperties": {}}}},
+}
+AZURE_ROUTER = {
+    "name": "storage", "description": "Storage operations",
+    "inputSchema": {"type": "object", "required": ["intent"], "properties": {
+        "intent": {"type": "string"}, "command": {"type": "string"},
+        "parameters": {"type": "object"}, "learn": {"type": "boolean"}}},
+}
+
+
+class TestCapabilityMovedBehindARouter(unittest.TestCase):
+    """Sentry 0.36.0 -> 0.39.0 replaced 15 tools with one executor.
+
+    create_project, create_team, create_dsn and twelve others left the tool
+    list; execute_sentry_tool arrived. Nothing was retired - the operations
+    moved behind a router, out of the surface this tool can observe, so from
+    that release onward changes to any of them produce no drift at all.
+
+    It was reported as fifteen DRIFT-010s, severity low, each advising the
+    reader to "confirm it was retired deliberately rather than failing to
+    load". The most consequential event in the public corpus rendered as
+    routine churn.
+    """
+
+    def only(self, changes, rule):
+        hits = [c for c in changes if c.rule == rule]
+        self.assertEqual(len(hits), 1, changes)
+        return hits[0]
+
+    def test_the_relocation_is_high_and_names_what_left(self):
+        before = [tool("create_project"), tool("create_team"), tool("search_issues")]
+        after = [tool("search_issues"), SENTRY_EXECUTOR]
+        change = self.only(compare(before, after), "DRIFT-014")
+        self.assertEqual(change.severity, "high")
+        self.assertEqual(change.evidence["router"], ["execute_sentry_tool"])
+        self.assertEqual(change.evidence["gone"], ["create_project", "create_team"])
+
+    def test_the_evidence_says_what_capability_left_the_surface(self):
+        """A reader needs to know whether what moved could only read."""
+        before = [tool("delete_everything"), tool("list_things"), tool("keep")]
+        after = [tool("keep"), SENTRY_EXECUTOR]
+        change = self.only(compare(before, after), "DRIFT-014")
+        self.assertIn("irreversible", change.evidence["effects"])
+
+    def test_removals_without_a_router_stay_ordinary_removals(self):
+        changes = compare([tool("a"), tool("b")], [tool("a")])
+        self.assertEqual([c.rule for c in changes], ["DRIFT-010"])
+
+    def test_a_router_arriving_alone_is_not_a_relocation(self):
+        """A server adding a router without dropping anything has not moved
+        capability out of view; DRIFT-007 already covers the new tool."""
+        changes = compare([tool("a")], [tool("a"), AZURE_ROUTER])
+        self.assertEqual([c.rule for c in changes], ["DRIFT-007"])
+
+    def test_the_per_tool_findings_survive(self):
+        """approve acts on those. Dropping them would leave the relocated
+        tools in the baseline permanently."""
+        changes = compare([tool("create_project"), tool("keep")],
+                          [tool("keep"), SENTRY_EXECUTOR])
+        self.assertEqual(sorted(c.rule for c in changes),
+                         ["DRIFT-007", "DRIFT-010", "DRIFT-014"])
+
+    def test_a_specified_object_beside_a_selector_is_not_a_router(self):
+        """The object says what goes in it, so the surface is still declared."""
+        runner = {"name": "run_report", "description": "Run",
+                  "inputSchema": {"type": "object", "properties": {
+                      "command": {"type": "string"},
+                      "opts": {"type": "object",
+                               "properties": {"retries": {"type": "integer"}}}}}}
+        changes = compare([tool("a"), tool("b")], [tool("a"), runner])
+        self.assertNotIn("DRIFT-014", [c.rule for c in changes])
+
+    def test_it_needs_the_live_schema_and_says_nothing_without_it(self):
+        """A stored record keeps property names and types only, so it cannot
+        show that an object declares nothing. Silence beats a guess."""
+        before = {"s@stdio:npx": snapshot_of([tool("gone"), tool("keep")])["s@stdio:npx"]}
+        after = snapshot_of([tool("keep"), SENTRY_EXECUTOR])
+        changes = drift.compare({"servers": before}, after, {}, ())
+        self.assertNotIn("DRIFT-014", [c.rule for c in changes])
+
+
 class TestAnnotationChangesThatRevokeNothing(unittest.TestCase):
     """chrome-devtools 1.9.0 added `conditions: ["javascriptEvaluation"]` to
     evaluate_script and kept `readOnlyHint: false` exactly as it was.

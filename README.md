@@ -69,12 +69,13 @@ toolprint check --connect --fail-on high
 toolprint approve --tool contact_delete --by "$USER" --note "expected in 4.2"
 ```
 
-Thirteen rules, most severe first: effect-class escalation and revoked safety
+Fourteen rules, most severe first: effect-class escalation and revoked safety
 annotations are `critical`; a description that changed while its schema did not
 is `high`, because that is the rug-pull signature — an attacker rewriting a
 tool's instructions has to leave the schema alone or the tool stops working.
 Invisible characters and cross-server references appearing in text are `high`
-too. Breaking schema changes, new tools and safety hints that changed without
+too, as are tools that vanish in the same release that adds a dispatch router —
+capability moving out of view rather than being retired. Breaking schema changes, new tools and safety hints that changed without
 being revoked are `medium`; additive changes, removals, vendor annotations and
 version bumps are `low`.
 
@@ -149,7 +150,15 @@ advertised surface, so any operation behind the router can be added, removed or
 repointed without moving a hash: a quiet result means the router did not
 change, not that its capabilities did not.
 
-`HYG-007` reports these, because a coverage gap you know about is worth more
+`HYG-007` reports a server that advertises routers, and `DRIFT-014` reports the
+moment capability moves behind one — tools disappearing in the same release
+that adds a router are relocating, not retiring. Sentry did exactly that in
+September 2026, replacing fifteen tools including `create_project`,
+`create_team` and `create_dsn` with a single `execute_sentry_tool`; before
+`DRIFT-014` that arrived as fifteen `low` removals advising the reader to
+confirm they were retired deliberately.
+
+Both exist because a coverage gap you know about is worth more
 than one you do not. Reading the real surface would mean calling the tool with
 `learn=true`, and observing must not have side effects. Pin those servers and
 read the release notes.
