@@ -67,6 +67,50 @@ class EngineCase(unittest.TestCase):
         return [f for f in report.findings if f.id == finding_id][0]
 
 
+class TestUnresolvedCapability(EngineCase):
+    """`read` used to mean two different things.
+
+    classify() returned it both when it had established a tool only reads and
+    when it had found nothing at all - highest() defaults to read on an empty
+    list. So absence of evidence rendered as the safest class, and there was no
+    way to tell the two apart. Across the 496 tools of the public watch corpus
+    that was 114 of them, 23%, and azure alone accounted for 61: dispatch
+    routers, whose names and schemas are uninformative by design.
+    """
+
+    def test_an_undeterminable_tool_is_reported(self):
+        self.give("claude_code/local/local-github", [
+            {"name": "frobnicate", "description": "Does a thing",
+             "inputSchema": {"type": "object", "properties": {}}}])
+        finding = self.find(self.run_engine(), "EFFECT-003")
+        self.assertEqual(finding.severity, library.LOW)
+        self.assertEqual([a["tool"] for a in finding.affected], ["frobnicate"])
+
+    def test_a_determinable_surface_raises_nothing(self):
+        self.give("claude_code/local/local-github", [READ_TOOL, DELETE_TOOL])
+        self.assertNotIn("EFFECT-003", self.ids(self.run_engine()))
+
+    def test_the_capability_summary_says_what_it_could_not_determine(self):
+        """This line is the one people quote. A count of destructive tools
+        drawn from a surface with unresolved ones in it is a lower bound."""
+        self.give("claude_code/local/local-github", [
+            DELETE_TOOL,
+            {"name": "frobnicate", "inputSchema": {"type": "object", "properties": {}}}])
+        summary = self.find(self.run_engine(), "EFFECT-001")
+        self.assertIn("could not be determined", summary.detail)
+        self.assertEqual(summary.evidence["unresolved"], 1)
+
+    def test_a_router_lands_in_it(self):
+        """The case the class exists for: azure's `storage` came back `read`
+        while its own description advertised creating accounts and uploading
+        files, because a router's name and schema say nothing."""
+        self.give("claude_code/local/local-github", [ROUTER_TOOL])
+        report = self.run_engine()
+        self.assertIn("EFFECT-003", self.ids(report))
+        self.assertEqual([a["tool"] for a in self.find(report, "EFFECT-003").affected],
+                         ["storage"])
+
+
 class TestDispatchRouters(EngineCase):
     """A tool whose arguments are "which operation" plus "anything at all".
 

@@ -24,18 +24,26 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-HEURISTICS_VERSION = 1
+HEURISTICS_VERSION = 2
 
 READ = "read"
 WRITE = "write"
 EXTERNAL = "external"
 IRREVERSIBLE = "irreversible"
+UNKNOWN = "unknown"
 
 # Display order only. `external` and `irreversible` are treated jointly as high
 # consequence everywhere severity is decided, so their relative rank never
 # changes an outcome - it only decides which single label a tool is shown under.
+#
+# `unknown` is deliberately absent. It is not a point on this scale: it says no
+# determination was reached, which is a different kind of statement from "reads"
+# or "deletes". Giving it a rank would make it comparable, and every comparison
+# would be wrong - a tool going unknown -> write has not escalated, it has been
+# identified. Keeping it out means drift.py's `in RANK` guard already declines
+# to call that an escalation, and `highest()` can never return it by accident.
 RANK = {READ: 0, WRITE: 1, EXTERNAL: 2, IRREVERSIBLE: 3}
-CLASSES = (READ, WRITE, EXTERNAL, IRREVERSIBLE)
+CLASSES = (UNKNOWN, READ, WRITE, EXTERNAL, IRREVERSIBLE)
 HIGH_CONSEQUENCE = (EXTERNAL, IRREVERSIBLE)
 
 VERBS: Dict[str, Tuple[str, ...]] = {
@@ -138,7 +146,10 @@ def from_name(name: str) -> Tuple[Optional[str], List[str]]:
     tokens = set(tokenise(name))
     hits: List[str] = []
     reasons: List[str] = []
-    for effect in CLASSES:
+    # RANK, not CLASSES: only the classes a verb can actually name. CLASSES
+    # carries `unknown` for tallying and display, and there is no such thing as
+    # an unknown verb.
+    for effect in sorted(RANK, key=lambda c: RANK[c]):
         matched = sorted(tokens & set(VERBS[effect]))
         if matched:
             hits.append(effect)
@@ -177,7 +188,26 @@ def classify(tool: Dict[str, Any]) -> Dict[str, Any]:
     inferred = [c for c in (lexical, schematic) if c]
     # Annotations raise the floor but never lower the result: a server asserting
     # read-only on a tool called delete_account is making a claim, not evidence.
-    effect = highest([c for c in (floor, lexical, schematic) if c])
+    signals = [c for c in (floor, lexical, schematic) if c]
+    if signals:
+        effect = highest(signals)
+    elif ceiling is not None:
+        # No evidence either way, but the server declared a limit and nothing
+        # contradicts it. A claim is not proof - `declared_ceiling` records that
+        # it was only a claim - but it is the only information there is, and
+        # answering `unknown` over an explicit declaration discards it.
+        effect = ceiling
+    else:
+        # Nothing said anything. This used to answer `read`, because highest()
+        # defaults to it on an empty list, so "I found nothing" and "I
+        # established this only reads" came out identical - and identical in
+        # the direction that understates. Across the 496 tools of the public
+        # watch corpus that was 112 of them, 23%, silently rendered as the
+        # safest class. A dispatch router is the clearest case: its name and
+        # schema are deliberately uninformative, so `storage` came back `read`
+        # while its own description advertised creating accounts and uploading
+        # files.
+        effect = UNKNOWN
 
     # Mislabelled only when the evidence exceeds a ceiling the server actually
     # declared. A missing or less specific annotation is not a contradiction.

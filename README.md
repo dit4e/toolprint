@@ -35,7 +35,7 @@ warning.
 | | |
 |---|---|
 | **Cost** | Per-tool and per-context token counts, as a share of your window |
-| **Capability** | Every tool classified `read` / `write` / `external` / `irreversible` |
+| **Capability** | Every tool classified `read` / `write` / `external` / `irreversible`, or `unknown` when nothing in its name, schema or annotations said |
 | **Mislabelled tools** | Tools whose safety annotation their own name or schema contradicts |
 | **Auth posture** | `none`, `env_var`, `literal_secret`, `helper_command`, `oauth` |
 | **Hygiene** | Credentials stored literally in config files, shadowed entries, unreachable servers, tools that dispatch on a free-form command |
@@ -154,6 +154,15 @@ model.
 
 It composes with scanners that address the first case rather than replacing
 them.
+
+**Absence of evidence is not evidence of harmlessness.** A tool whose name,
+schema and annotations say nothing about what it affects is classed `unknown`,
+not `read`. Those were the same answer until 0.3.4, so a tool nothing could be
+determined about was reported identically to one established as harmless — and
+identically in the direction that understates. On the public watch corpus that
+was 114 of 496 tools. `unknown` has no rank: it says no determination was
+reached, which is a different kind of statement from "reads" or "deletes", and
+a tool going `unknown` → `write` has been identified rather than escalated.
 
 **A tool that takes a free-form command is not characterised by its schema.**
 Some servers advertise routers rather than operations: one tool per service,

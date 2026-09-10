@@ -35,8 +35,33 @@ class TestLexical(unittest.TestCase):
         for name in ("github__issues.create", "issues-create", "IssuesCreate"):
             self.assertEqual(classify(name)["effect"], effects.WRITE, name)
 
-    def test_unknown_verb_defaults_to_read(self):
-        self.assertEqual(classify("frobnicate")["effect"], effects.READ)
+    def test_an_unrecognised_verb_is_unknown_not_read(self):
+        """No signal is not the same statement as "this only reads".
+
+        It answered read for as long as this file existed, because highest()
+        defaults to read on an empty list. So a tool nothing could be
+        determined about was reported identically to one established as
+        harmless - and identically in the direction that understates. Across
+        the 496 tools of the public watch corpus that was 112 of them.
+        """
+        result = classify("frobnicate")
+        self.assertEqual(result["effect"], effects.UNKNOWN)
+        self.assertEqual(result["evidence"], [])
+
+    def test_a_declared_ceiling_still_answers(self):
+        """A claim is not proof, but it is the only information there is, and
+        answering `unknown` over an explicit declaration discards it."""
+        result = classify("frobnicate", annotations={"readOnlyHint": True})
+        self.assertEqual(result["effect"], effects.READ)
+        self.assertEqual(result["declared_ceiling"], effects.READ)
+
+    def test_unknown_is_not_rankable(self):
+        """It says no determination was reached, which is a different kind of
+        statement from "reads" or "deletes". A rank would make it comparable,
+        and every comparison would be wrong: unknown -> write is a tool being
+        identified, not a tool escalating."""
+        self.assertNotIn(effects.UNKNOWN, effects.RANK)
+        self.assertIn(effects.UNKNOWN, effects.CLASSES)
 
     def test_highest_class_wins(self):
         self.assertEqual(classify("get_and_delete")["effect"], effects.IRREVERSIBLE)
@@ -107,8 +132,9 @@ class TestEvidenceAndCounts(unittest.TestCase):
         self.assertTrue(any("delete" in line for line in evidence))
 
     def test_counts_cover_every_class(self):
-        tally = effects.counts([classify(n) for n in ("get_x", "create_x", "send_x", "delete_x")])
-        self.assertEqual(tally, {effects.READ: 1, effects.WRITE: 1,
+        tally = effects.counts(
+            [classify(n) for n in ("get_x", "create_x", "send_x", "delete_x", "frobnicate")])
+        self.assertEqual(tally, {effects.UNKNOWN: 1, effects.READ: 1, effects.WRITE: 1,
                                  effects.EXTERNAL: 1, effects.IRREVERSIBLE: 1})
 
     def test_heuristics_version_is_recorded(self):

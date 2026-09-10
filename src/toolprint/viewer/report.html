@@ -413,12 +413,13 @@ function renderCost(root, data, summary) {
 function renderCapability(root, data, summary) {
   section(root, "Capability and risk");
   var counts = summary.effect_counts || {};
-  var order = ["read", "write", "external", "irreversible"];
+  var order = ["read", "write", "external", "irreversible", "unknown"];
   var labels = {
     read: "Read only",
     write: "Can modify data",
     external: "Can send, publish or spend",
-    irreversible: "Can do something irreversible"
+    irreversible: "Can do something irreversible",
+    unknown: "Not determined \u2014 nothing in the name, schema or annotations said"
   };
   var total = order.reduce(function (a, k) { return a + (counts[k] || 0); }, 0) || 1;
   var tbody = table(root, ["Capability", "Tools", "Share"], [null, "num", null]);

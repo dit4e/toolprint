@@ -95,6 +95,21 @@ DEFINITIONS: Dict[str, Definition] = {d.id: d for d in [
         "maintainer; until it is fixed, treat the annotation as absent.",
     ),
     Definition(
+        "EFFECT-003", EFFECT,
+        "Tools whose capability could not be determined",
+        "Read what these do before trusting a capability summary that omits "
+        "them.",
+        "Nothing in these tools' names, schemas or annotations said what they "
+        "affect, so no class was inferred. They are reported as `unknown` "
+        "rather than folded into `read`, because absence of evidence is not "
+        "evidence of harmlessness and the two used to be indistinguishable. "
+        "A dispatch router is the common case - a tool taking an operation "
+        "name and a free-form argument object is uninformative by design, and "
+        "the operations behind it can do anything the server can. Read the "
+        "documentation for these, and treat any count of destructive tools as "
+        "a lower bound while they are unresolved.",
+    ),
+    Definition(
         "COST-001", COST,
         "Tool definitions consume a large share of the context window",
         "Unload servers this project does not use.",

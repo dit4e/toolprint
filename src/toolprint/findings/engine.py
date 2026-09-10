@@ -164,6 +164,7 @@ def _effect_findings(context: Optional[Context], by_server: Dict[str, Dict[str, 
 
     tally = {effect: 0 for effect in effects.CLASSES}
     mislabelled: List[Dict[str, str]] = []
+    unresolved: List[Dict[str, str]] = []
     evidence: Dict[str, Any] = {}
     for server in sorted(context.servers, key=lambda s: s.key):
         classified = by_server.get(server.key, {})
@@ -173,16 +174,35 @@ def _effect_findings(context: Optional[Context], by_server: Dict[str, Dict[str, 
             if info["mislabelled"]:
                 mislabelled.append({"server": server.key, "tool": name})
                 evidence[server.key + "/" + name] = info["evidence"]
+            if info["effect"] == effects.UNKNOWN:
+                unresolved.append({"server": server.key, "tool": name})
 
     risky = tally[effects.EXTERNAL] + tally[effects.IRREVERSIBLE]
     if sum(tally.values()):
         found.append(_make(
             "EFFECT-001", INFO,
             "In {}: {} can write, {} can send or reach outside, {} can do "
-            "something irreversible.".format(
+            "something irreversible{}.".format(
                 context.label, tally[effects.WRITE],
-                tally[effects.EXTERNAL], tally[effects.IRREVERSIBLE]),
-            evidence={"effect_counts": tally, "high_consequence": risky},
+                tally[effects.EXTERNAL], tally[effects.IRREVERSIBLE],
+                # Said here rather than only in EFFECT-003, because this line is
+                # the capability summary people quote, and a count of
+                # destructive tools drawn from a surface with unresolved ones in
+                # it is a lower bound, not a total.
+                "; {} could not be determined".format(tally[effects.UNKNOWN])
+                if tally[effects.UNKNOWN] else ""),
+            evidence={"effect_counts": tally, "high_consequence": risky,
+                      "unresolved": tally[effects.UNKNOWN]},
+        ))
+
+    if unresolved:
+        found.append(_make(
+            "EFFECT-003", LOW,
+            "{} whose capability could not be determined from name, schema or "
+            "annotations.".format(_plural(len(unresolved), "tool")),
+            affected=unresolved,
+            evidence={"unresolved": len(unresolved),
+                      "of": sum(tally.values())},
         ))
 
     if mislabelled:
