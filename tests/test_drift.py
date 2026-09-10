@@ -843,6 +843,77 @@ class TestBaselineRefresh(unittest.TestCase):
         self.assertEqual(bl.adopt_new(dict(document), current), [])
 
 
+class TestCheckCanKeepTheSurfaceItRead(unittest.TestCase):
+    """Drift records that a description changed, never what it said.
+
+    Hashes are one way, so a corpus built from drift reports alone can prove a
+    rug pull happened and can never show it. `check --bundle` writes the text
+    from the connection the check already made - a second pass would double the
+    cold package fetches, which is what once took the public collector from
+    three minutes to twenty-seven.
+
+    It reuses `scan --bundle`'s allowlist rather than a second redaction path,
+    because that allowlist is the security boundary: it is what keeps absolute
+    paths, project names, usernames and credential values out of a file that
+    gets published.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.path = str(Path(self.dir) / "baseline.json")
+        self.bundle = str(Path(self.dir) / "surface.json")
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+
+    def inventory(self):
+        s = Server(name="s", client="c", scope="user", scope_detail="/home/someone/.mcp.json",
+                   source_path="/home/someone/work/secret-project/.mcp.json",
+                   transport="stdio", command="npx")
+        s.fetch_status = "ok"
+        s.tools = [tool("act", description="Does a thing to /home/someone/data")]
+        return Inventory(servers=[s])
+
+    def run_check(self, inventory):
+        import argparse
+
+        from toolprint import cli
+
+        args = argparse.Namespace(
+            baseline=self.path, bundle=self.bundle, anonymize=None, yes=True,
+            config=None, format="json", out=None, findings=None, html=None,
+            fail_on="none", min_coverage=0.0, window=200000, price_per_mtok=None,
+            timeout=15, startup_timeout=90, connect=True)
+        original = cli._collect_live
+        cli._collect_live = lambda a: (inventory, [], True)
+        try:
+            return cli.cmd_check(args)
+        finally:
+            cli._collect_live = original
+
+    def test_the_description_is_kept(self):
+        inv = self.inventory()
+        bl.save(self.path, bl.build(inv, approved_by="t"))
+        self.run_check(inv)
+        doc = json.loads(Path(self.bundle).read_text())
+        self.assertEqual(doc["servers"][0]["tools"][0]["description"],
+                         "Does a thing to /home/someone/data")
+
+    def test_it_carries_no_path_project_or_username(self):
+        """The fields that make a findings.json unsafe to publish."""
+        inv = self.inventory()
+        bl.save(self.path, bl.build(inv, approved_by="t"))
+        self.run_check(inv)
+        blob = Path(self.bundle).read_text()
+        for probe in ("source_path", "secret-project", "scope_detail", '"project"'):
+            self.assertNotIn(probe, blob, probe)
+
+    def test_no_bundle_is_written_unless_asked(self):
+        inv = self.inventory()
+        bl.save(self.path, bl.build(inv, approved_by="t"))
+        self.bundle = None
+        self.run_check(inv)
+        self.assertFalse((Path(self.dir) / "surface.json").exists())
+
+
 class TestRefreshKeepsFirstObserved(unittest.TestCase):
     """A refresh used to erase the one field the live surface cannot supply.
 

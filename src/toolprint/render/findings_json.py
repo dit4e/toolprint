@@ -5,8 +5,19 @@ One deliberate choice worth stating: `summary` describes the
 carries the rest. A conversation loads one client in one project, so the union
 has no reader - it describes no state the system is ever in.
 
-Sensitivity: this file contains tool names, descriptions and schemas and is as
-sensitive as a bundle. That is why the M3 viewer is client-side.
+Sensitivity: not what an earlier version of this note claimed. It carries no
+tool descriptions or schemas - per tool it holds name, tokens, effect,
+declared_ceiling and mislabelled. What makes it sensitive is the machine
+description around them: `source_path` and `project` are absolute paths
+carrying a username and the name of whatever is being worked on, `env_names`
+is a credential inventory by name, and `url_host` names internal endpoints.
+Together those say who someone is, which clients they run, what they have
+wired up, and which of it is unauthenticated.
+
+So this file is safe to publish only when the config it describes already is.
+`bundle` is the artefact built to leave a machine - it projects through an
+allowlist and carries none of those fields. That is also why the M3 viewer is
+client-side.
 
 `generated_at` is the only field that varies between two runs of an unchanged
 system. Everything else is ordered deterministically so the M2 two-run test can

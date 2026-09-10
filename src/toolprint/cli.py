@@ -124,6 +124,15 @@ def build_parser() -> argparse.ArgumentParser:
             cmd.add_argument("--out", metavar="PATH")
             cmd.add_argument("--findings", metavar="PATH",
                              help="write findings.json with the drift block populated")
+            cmd.add_argument("--bundle", metavar="PATH",
+                             help="write a redacted bundle of the surface this check "
+                                  "read; same allowlist as `scan --bundle`. A drift "
+                                  "report records that a description changed, never "
+                                  "what it said - hashes are one way. This is how you "
+                                  "keep the text")
+            cmd.add_argument("--anonymize", metavar="SALT",
+                             help="with --bundle, hash server names and hostnames "
+                                  "using SALT")
             cmd.add_argument("--html", metavar="PATH",
                              help="write a self-contained HTML report including drift")
         if name == "approve":
@@ -203,17 +212,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
     report = engine.analyse(inventory, contexts, args.window, args.price_per_mtok)
 
-    if args.bundle:
-        collected_at = datetime.datetime.now(datetime.timezone.utc).strftime(
-            "%Y-%m-%dT%H:%M:%SZ")
-        document = bundle.build(
-            inventory, collected_at,
-            "connect" if not args.no_connect else "config_only",
-            salt=args.anonymize, kit_sha256=kit_digest())
-        Path(args.bundle).write_text(
-            json.dumps(document, indent=2) + "\n", encoding="utf-8")
-        sys.stderr.write(bundle.summarise(
-            document, args.bundle, Path(args.bundle).stat().st_size))
+    _write_bundle(args, inventory, "connect" if not args.no_connect else "config_only")
 
     if args.findings or args.html:
         generated_at = datetime.datetime.now(datetime.timezone.utc).strftime(
@@ -246,6 +245,23 @@ def cmd_scan(args: argparse.Namespace) -> int:
             sys.stderr.write("{} finding(s) at or above {}\n".format(len(triggered), args.fail_on))
             return EXIT_FINDINGS
     return EXIT_OK
+
+
+def _write_bundle(args: argparse.Namespace, inventory, mode: str) -> None:
+    """Write the redacted bundle, if one was asked for.
+
+    Shared by scan and check rather than duplicated: the allowlist in bundle.py
+    is the security boundary, and two call sites is two places for it to drift.
+    """
+    path = getattr(args, "bundle", None)
+    if not path:
+        return
+    collected_at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    document = bundle.build(inventory, collected_at, mode,
+                            salt=getattr(args, "anonymize", None),
+                            kit_sha256=kit_digest())
+    Path(path).write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+    sys.stderr.write(bundle.summarise(document, path, Path(path).stat().st_size))
 
 
 def _collect_live(args: argparse.Namespace):
@@ -339,6 +355,11 @@ def cmd_check(args: argparse.Namespace) -> int:
     inventory, contexts, proceeded = _collect_live(args)
     if not proceeded:
         return EXIT_OK
+
+    # Written from the same connection this check already made. A second pass
+    # would double the cold package fetches, which is what took the public
+    # collector from three minutes to twenty-seven.
+    _write_bundle(args, inventory, "connect")
 
     recorded_platform = document.get("platform")
     if recorded_platform and recorded_platform != sys.platform:

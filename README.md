@@ -59,6 +59,25 @@ no fonts, no analytics, and a Content-Security-Policy of `default-src 'none'`
 with `connect-src 'none'` — it has no capability to transmit what it displays.
 It opens from `file://` and prints cleanly to PDF.
 
+**`findings.json` describes your machine, not just your servers.** It carries
+`source_path` and `project` — absolute paths holding your username and the name
+of whatever you are working on — plus `env_names`, which is your credential
+inventory by name, and `url_host` for any internal endpoints. Read together
+that is who you are, which clients you run, what you have wired up, and which
+of it is unauthenticated. Treat it like the config it describes: fine to keep,
+think before attaching it to a ticket.
+
+`--bundle` is the artefact built to leave a machine. It projects through an
+allowlist in one visible constant, so no field reaches the file unless it is
+named there, and none of the above are. It carries the tool definitions
+themselves — names, descriptions, schemas — because those are the substance of
+an assessment and are already what the model sees on every request.
+
+`check --bundle` writes the same thing from the connection a drift check has
+already made. A drift report records *that* a description changed and never
+what it said, because hashes are one way; this is how the text is kept without
+a second pass over every server.
+
 ## Drift
 
 Once a baseline exists, `check` reports what changed without anyone reviewing it.
