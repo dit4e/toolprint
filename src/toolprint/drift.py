@@ -1,4 +1,4 @@
-"""Drift classification. Fourteen rules, checked in order; the first match wins.
+"""Drift classification. Fifteen rules, checked in order; the first match wins.
 
 Rule ids are stable - exceptions reference them - so they are assigned in the
 order the rules were written, and the RULES list below is ordered by precedence.
@@ -37,6 +37,7 @@ RULES = [
     ("DRIFT-008", MEDIUM, "Server instructions changed"),
     ("DRIFT-011", MEDIUM, "Safety annotation added or relaxed"),
     ("DRIFT-009", LOW, "Additive schema change"),
+    ("DRIFT-015", LOW, "Schema changed inside its parameters"),
     ("DRIFT-010", LOW, "Tool removed"),
     ("DRIFT-012", LOW, "Tool annotations changed"),
     ("DRIFT-013", LOW, "Server version changed"),
@@ -65,6 +66,12 @@ REMEDIATION = {
                  "and is not covered by any tool's schema.",
     "DRIFT-009": "Parameters were added without breaking existing calls. Usually a "
                  "routine release; approve to silence.",
+    "DRIFT-015": "The schema changed but no parameter was added, removed, retyped or "
+                 "made required, so the change is in what the parameters say - "
+                 "their descriptions, enums, defaults or constraints. Descriptions "
+                 "inside a schema are text the model reads, the same as the tool's "
+                 "own. The recorded shape cannot show which; compare the `check "
+                 "--bundle` output from before and after.",
     "DRIFT-010": "A tool disappeared from an approved server. Confirm it was retired "
                  "deliberately rather than failing to load.",
     "DRIFT-011": "A safety hint changed without being revoked - most often a tool "
@@ -240,7 +247,16 @@ def _classify_tool(server: str, name: str, old: Dict[str, Any], new: Dict[str, A
             return make("DRIFT-006", "; ".join(delta["breaking"][:4]), **delta)
         if delta["additive"]:
             return make("DRIFT-009", "; ".join(delta["additive"][:4]), **delta)
-        return make("DRIFT-009", "schema changed without a shape-level difference", **delta)
+        # Not additive: nothing was added. This went out as "Additive schema
+        # change" with empty `additive` and `breaking` lists, which is 89 of the
+        # 101 DRIFT-009s the public corpus ever recorded - the title was wrong
+        # most of the time it appeared. chrome-devtools 1.9.0's new_page was
+        # one: a parenthetical added to a property description.
+        return make("DRIFT-015",
+                    "no parameter was added, removed, retyped or made required; "
+                    "a description, enum, default or constraint inside the schema changed",
+                    schema_hash_was=old.get("schema_hash", "")[:12],
+                    schema_hash_now=new.get("schema_hash", "")[:12])
 
     if old.get("annotations_hash") != new.get("annotations_hash"):
         # Reaching here means _annotation_revoked already returned None, so no

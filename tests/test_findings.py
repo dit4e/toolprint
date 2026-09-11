@@ -67,6 +67,55 @@ class EngineCase(unittest.TestCase):
         return [f for f in report.findings if f.id == finding_id][0]
 
 
+class TestReportedVersionMismatch(EngineCase):
+    """HYG-006 had no tests, and its message was wrong three ways.
+
+    On the public corpus it said "9 unrelated servers all report '0.1.0',
+    which is the version of the SDK they are built on". Five reported 0.1.0;
+    the other four were two pairs sharing 2.0.0 and 1.0.0, summed together and
+    labelled with the first version alphabetically. Four of the five were one
+    vendor's reference servers, so not unrelated. And server-postgres 0.6.2
+    hardcodes `version: "0.1.0"` in its source while depending on SDK 1.0.1,
+    so the SDK was not the cause either.
+    """
+
+    def claim(self, key, reports, installed):
+        server = self.by_key[key]
+        server.server_version, server.installed_versions = reports, [installed]
+
+    def test_each_shared_version_is_counted_on_its_own(self):
+        for key, reports, installed in [
+                ("claude_code/project/proj-time", "0.1.0", "0.6.2"),
+                ("cursor/user/task-runner", "0.1.0", "0.6.2"),
+                ("gemini_cli/user/gem", "0.1.0", "2025.5.12"),
+                ("claude_code/local/local-github", "2.0.0", "2.0.2"),
+                ("cursor/project/proj-cursor", "2.0.0", "2026.8.31")]:
+            self.claim(key, reports, installed)
+        finding = self.find(self.run_engine(), "HYG-006")
+        self.assertIn("3 report '0.1.0'", finding.detail)
+        self.assertIn("2 report '2.0.0'", finding.detail)
+        self.assertNotIn("5 ", finding.detail.split(";", 1)[1])
+        self.assertEqual(sorted(finding.evidence["shared"]), ["0.1.0", "2.0.0"])
+
+    def test_it_asserts_no_cause(self):
+        """The cause varies - an SDK version for some, a literal in the source
+        for others - so the detail says only what follows from the mismatch."""
+        self.claim("claude_code/project/proj-time", "0.1.0", "0.6.2")
+        self.claim("cursor/user/task-runner", "0.1.0", "0.6.2")
+        detail = self.find(self.run_engine(), "HYG-006").detail
+        self.assertNotIn("SDK", detail)
+        self.assertNotIn("unrelated", detail)
+
+    def test_a_lone_mismatch_is_reported_without_a_shared_clause(self):
+        self.claim("claude_code/project/proj-time", "0.1.0", "0.6.2")
+        detail = self.find(self.run_engine(), "HYG-006").detail
+        self.assertNotIn("cannot tell them apart", detail)
+
+    def test_a_matching_version_raises_nothing(self):
+        self.claim("claude_code/project/proj-time", "0.6.2", "0.6.2")
+        self.assertNotIn("HYG-006", self.ids(self.run_engine()))
+
+
 class TestUnresolvedCapability(EngineCase):
     """`read` used to mean two different things.
 

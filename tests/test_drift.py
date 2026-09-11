@@ -154,6 +154,30 @@ class TestRules(unittest.TestCase):
                                                    "b": {"type": "string"}}})]))
         self.assertEqual((change.rule, change.severity), ("DRIFT-009", "low"))
 
+    def test_015_a_change_inside_the_parameters_is_not_called_additive(self):
+        """chrome-devtools 1.9.0 added a parenthetical to one property's
+        description on new_page. That was reported as "Additive schema change"
+        with empty `additive` and `breaking` lists - and 89 of the 101
+        DRIFT-009s in the public corpus were this shape. The title contradicted
+        the finding most of the times it appeared."""
+        before = {"properties": {"ctx": {"type": "string",
+                                         "description": "Pages are fully isolated."}}}
+        after = {"properties": {"ctx": {"type": "string",
+                                        "description": "Pages are fully isolated (useful for "
+                                                       "clean-slate testing of cookies)."}}}
+        change = self.only(compare([tool("new_page", schema=before)],
+                                   [tool("new_page", schema=after)]))
+        self.assertEqual((change.rule, change.severity), ("DRIFT-015", "low"))
+        self.assertNotIn("additive", change.evidence)
+        self.assertNotEqual(change.evidence["schema_hash_was"], change.evidence["schema_hash_now"])
+
+    def test_015_an_enum_change_lands_there_too(self):
+        before = {"properties": {"mode": {"type": "string", "enum": ["a", "b"]}}}
+        after = {"properties": {"mode": {"type": "string", "enum": ["a", "b", "c"]}}}
+        change = self.only(compare([tool("set_mode", schema=before)],
+                                   [tool("set_mode", schema=after)]))
+        self.assertEqual(change.rule, "DRIFT-015")
+
     def test_first_match_wins(self):
         """An escalation that also breaks the schema reports as an escalation."""
         change = self.only(compare(

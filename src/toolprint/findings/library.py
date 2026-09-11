@@ -184,10 +184,12 @@ DEFINITIONS: Dict[str, Definition] = {d.id: d for d in [
         "Server reports a version that is not the one installed",
         "Trust the installed version, not the server's; tell the maintainer.",
         "The version a server states for itself does not match any copy of its "
-        "package on this machine. Servers built on the official Python SDK "
-        "commonly report the SDK's version rather than their own, so several "
-        "unrelated servers announce the same number. Whatever the cause, the "
-        "field cannot be used to identify what is running - read the installed "
+        "package on this machine. There is more than one cause. Some servers "
+        "report the version of the SDK they are built on - several built on the "
+        "official Python SDK moved from 1.29.1 to 1.30.0 on the same day. Others "
+        "report a literal left in their source: the archived reference servers "
+        "hardcode 0.1.0 while shipping as 0.6.2. Whatever the cause, the field "
+        "cannot be used to identify what is running - read the installed "
         "version instead, and report the mismatch to whoever maintains the "
         "server.",
     ),

@@ -340,20 +340,29 @@ def _hygiene_findings(inventory: Inventory, contexts: Sequence[Context]) -> List
                 "reports": server.server_version,
                 "installed": server.installed_versions,
             }
-        shared = {}
+        shared: Dict[str, List[str]] = {}
         for server in misreporting:
             shared.setdefault(server.server_version, []).append(server.name)
-        echoed = {v: n for v, n in shared.items() if len(set(n)) > 1}
+        # Each shared version with its own count. The earlier message summed the
+        # servers across every shared version and printed only the first one,
+        # so "9 servers all report '0.1.0'" meant 5 reporting 0.1.0, 2 reporting
+        # 2.0.0 and 2 reporting 1.0.0. It also called them "unrelated" and named
+        # the SDK as the cause; four of those five were one vendor's reference
+        # servers, and the 0.1.0 was a literal in their source while they
+        # depended on SDK 1.0.1. The cause varies, so the detail states only
+        # the consequence, which does not.
+        echoed = sorted(((v, sorted(set(n))) for v, n in shared.items() if len(set(n)) > 1),
+                        key=lambda item: (-len(item[1]), item[0]))
         found.append(_make(
             "HYG-006", LOW,
             "{} report a version that is not installed on this machine{}.".format(
                 _plural(len(misreporting), "server"),
-                "; {} unrelated servers all report {!r}, which is the version of "
-                "the SDK they are built on rather than their own".format(
-                    len(set(sum(echoed.values(), []))), sorted(echoed)[0])
+                "; {}, so the field cannot tell them apart".format("; ".join(
+                    "{} report {!r}".format(len(names), version) for version, names in echoed))
                 if echoed else ""),
             affected=[{"server": s.key, "tool": ""} for s in misreporting],
-            evidence={"servers": seen_claims},
+            evidence={"servers": seen_claims,
+                      "shared": {version: names for version, names in echoed}},
         ))
 
     routers = _dispatch_routers(inventory)

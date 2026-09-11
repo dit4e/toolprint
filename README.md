@@ -88,15 +88,15 @@ toolprint check --connect --fail-on high
 toolprint approve --tool contact_delete --by "$USER" --note "expected in 4.2"
 ```
 
-Fourteen rules, most severe first: effect-class escalation and revoked safety
+Fifteen rules, most severe first: effect-class escalation and revoked safety
 annotations are `critical`; a description that changed while its schema did not
 is `high`, because that is the rug-pull signature — an attacker rewriting a
 tool's instructions has to leave the schema alone or the tool stops working.
 Invisible characters and cross-server references appearing in text are `high`
 too, as are tools that vanish in the same release that adds a dispatch router —
 capability moving out of view rather than being retired. Breaking schema changes, new tools and safety hints that changed without
-being revoked are `medium`; additive changes, removals, vendor annotations and
-version bumps are `low`.
+being revoked are `medium`; additive changes, changes inside a parameter's description or
+constraints, removals, vendor annotations and version bumps are `low`.
 
 A revoked annotation means a guarantee was withdrawn — `readOnlyHint` going
 false, or `destructiveHint` going true. An annotation that merely *changed* is
