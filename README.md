@@ -73,6 +73,20 @@ named there, and none of the above are. It carries the tool definitions
 themselves — names, descriptions, schemas — because those are the substance of
 an assessment and are already what the model sees on every request.
 
+`toolprint diff BEFORE.json AFTER.json` compares two stored surfaces without
+contacting anything. Every other comparison here connects, which is impossible
+for a surface captured months ago or for a package version nobody runs any
+more — and that is the whole back catalogue. Because a bundle carries the tool
+definitions and not just their hashes, the full rule set applies: invisible
+characters and cross-server references are found in the stored text, not
+inferred from it.
+
+```bash
+toolprint scan --connect --config v1.json --bundle before.json
+toolprint scan --connect --config v2.json --bundle after.json
+toolprint diff before.json after.json --pair-single
+```
+
 `check --bundle` writes the same thing from the connection a drift check has
 already made. A drift report records *that* a description changed and never
 what it said, because hashes are one way; this is how the text is kept without

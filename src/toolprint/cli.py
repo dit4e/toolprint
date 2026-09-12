@@ -61,6 +61,22 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--yes", action="store_true",
                       help="skip the confirmation prompt before contacting servers")
     scan.add_argument("--format", choices=["text", "json", "sarif"], default="text")
+    diff = sub.add_parser(
+        "diff", help="compare two stored surfaces offline, without contacting anything")
+    diff.add_argument("before", metavar="BEFORE")
+    diff.add_argument("after", metavar="AFTER")
+    diff.add_argument("--format", choices=["text", "json", "sarif"], default="text")
+    diff.add_argument("--out", metavar="PATH")
+    diff.add_argument("--fail-on", choices=library.SEVERITIES + ["none"],
+                      default="none", metavar="LEVEL",
+                      help="exit non-zero on a change at or above LEVEL (default none: "
+                           "a diff of two archived surfaces is usually a measurement, "
+                           "not a gate)")
+    diff.add_argument("--pair-single", action="store_true",
+                      help="when each file holds exactly one server, compare them even "
+                           "though their names differ - the usual case when diffing two "
+                           "released versions of the same package")
+
     scan.add_argument("--findings", metavar="PATH",
                       help="write findings.json (the contract every renderer consumes)")
     scan.add_argument("--bundle", metavar="PATH",
@@ -175,6 +191,101 @@ def kit_digest() -> str:
     return hashlib.sha256(
         Path(html_render.template_path()).parent.parent.joinpath(
             "vendor", "mcp_collect.py").read_bytes()).hexdigest()
+
+
+def _load_surface(path: str):
+    """Records, live tools and a label, from a bundle or a baseline."""
+    try:
+        document = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise SystemExit("cannot read {}: {}".format(path, exc))
+    if not isinstance(document, dict):
+        raise SystemExit("{} is not a toolprint surface".format(path))
+    if "bundle_version" in document:
+        servers, live = baseline_mod.from_bundle(document)
+        return servers, live, "bundle", document
+    if "baseline_version" in document and isinstance(document.get("servers"), dict):
+        return document.get("servers") or {}, {}, "baseline", document
+    raise SystemExit(
+        "{} is neither a bundle nor a baseline. Produce one with "
+        "`{} scan --connect --bundle FILE`.".format(path, TOOL_NAME))
+
+
+def cmd_diff(args: argparse.Namespace) -> int:
+    """Compare two surfaces that were captured earlier.
+
+    Every other comparison here contacts the servers, which is impossible for a
+    surface captured months ago or for a package version nobody runs any more.
+    The registries keep every release ever published; this is how that back
+    catalogue gets read.
+    """
+    before, before_live, before_kind, _ = _load_surface(args.before)
+    after, after_live, after_kind, after_doc = _load_surface(args.after)
+
+    # Bundles carry no instruction string, so comparing one against a baseline
+    # would report DRIFT-008 on every server purely because one side recorded
+    # something the other cannot. Drop it from both rather than report a
+    # difference in what was captured as a difference in what was served.
+    instructions_compared = before_kind == after_kind == "baseline"
+    if not instructions_compared:
+        for side in (before, after):
+            for record in side.values():
+                record.pop("instructions_hash", None)
+
+    paired = None
+    if len(before) == 1 and len(after) == 1 and set(before) != set(after):
+        if args.pair_single:
+            paired = (list(before)[0], list(after)[0])
+            after = {paired[0]: list(after.values())[0]}
+            after_live = {paired[0]: list(after_live.values())[0]} if after_live else {}
+        else:
+            sys.stderr.write(
+                "The two files each hold one server, but under different names:\n"
+                "  {}\n  {}\n"
+                "Pass --pair-single to compare them anyway.\n".format(
+                    list(before)[0], list(after)[0]))
+            return EXIT_ERROR
+
+    live = dict(before_live)
+    live.update(after_live)
+    changes = drift.compare({"servers": before}, after, live, ())
+
+    only_before = sorted(set(before) - set(after))
+    only_after = sorted(set(after) - set(before))
+
+    if args.format == "sarif":
+        output = json.dumps(sarif.build(None, None, changes), indent=2) + "\n"
+    elif args.format == "json":
+        output = json.dumps({
+            "before": args.before,
+            "after": args.after,
+            "before_kind": before_kind,
+            "after_kind": after_kind,
+            "paired_as": paired[0] if paired else None,
+            "instructions_compared": instructions_compared,
+            "servers_compared": len(set(before) & set(after)),
+            "only_in_before": only_before,
+            "only_in_after": only_after,
+            "changes": [_change_dict(c) for c in changes],
+        }, indent=2) + "\n"
+    else:
+        output = _render_diff(changes, args.before, args.after, len(set(before) & set(after)),
+                              only_before, only_after, instructions_compared,
+                              after_doc.get("collected_at")) + "\n"
+
+    if args.out:
+        Path(args.out).write_text(output, encoding="utf-8")
+        sys.stderr.write("wrote {}\n".format(args.out))
+    else:
+        sys.stdout.write(output)
+
+    if args.fail_on != "none":
+        triggered = [c for c in changes if library.at_or_above(c.severity, args.fail_on)]
+        if triggered:
+            sys.stderr.write("{} change(s) at or above {}\n".format(
+                len(triggered), args.fail_on))
+            return EXIT_FINDINGS
+    return EXIT_OK
 
 
 def cmd_scan(args: argparse.Namespace) -> int:
@@ -601,6 +712,36 @@ def _change_dict(change) -> dict:
     }
 
 
+def _render_diff(changes, before: str, after: str, compared: int,
+                 only_before, only_after, instructions_compared: bool,
+                 captured_at=None) -> str:
+    lines = ["{} {} — {} → {}".format(TOOL_NAME, __version__, before, after), ""]
+    lines.append("  {} server(s) compared{}".format(
+        compared, ", captured {}".format(captured_at) if captured_at else ""))
+    if only_before:
+        lines.append("  only in {}: {}".format(before, ", ".join(only_before[:6])))
+    if only_after:
+        lines.append("  only in {}: {}".format(after, ", ".join(only_after[:6])))
+    if not instructions_compared:
+        lines.append("  server instructions not compared: bundles do not carry them")
+    lines.append("")
+    if not changes:
+        lines.append("  No change in any tool definition.")
+        return "\n".join(lines)
+    for change in changes:
+        target = change.server + ("/" + change.tool if change.tool else "")
+        lines.append("  [{}] {}  {}".format(change.severity.upper(), change.rule, change.title))
+        lines.append("      {}".format(target))
+        lines.append("      {}".format(change.detail))
+        lines.append("")
+    counts: Dict[str, int] = {}
+    for change in changes:
+        counts[change.severity] = counts.get(change.severity, 0) + 1
+    lines.append("  {} change(s): {}".format(
+        len(changes), ", ".join("{} {}".format(n, s) for s, n in sorted(counts.items()))))
+    return "\n".join(lines)
+
+
 def _render_changes(changes, expired, path: str, new_servers=(), gone_servers=(),
                     recorded_platform=None, coverage=None, reached=None,
                     baselined=None) -> str:
@@ -689,6 +830,8 @@ def main(argv=None) -> int:
             return cmd_baseline(args)
         if args.command == "check":
             return cmd_check(args)
+        if args.command == "diff":
+            return cmd_diff(args)
         if args.command == "approve":
             return cmd_approve(args)
         if args.command == "clients":

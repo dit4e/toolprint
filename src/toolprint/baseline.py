@@ -107,6 +107,44 @@ def snapshot(inventory: Inventory) -> Dict[str, Any]:
     return OrderedDict(sorted(servers.items()))
 
 
+def from_bundle(document: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Baseline-shaped records and live tools from a stored bundle.
+
+    A bundle holds whole tool definitions rather than the records `snapshot`
+    derives, so a surface captured months ago - or on another machine, or from a
+    package version whose server no longer runs anywhere - can be compared
+    without contacting anything. That is the only way to read a registry's back
+    catalogue, where the servers are long gone and only the published artefacts
+    remain.
+
+    `instructions_hash` is left unset: bundles do not carry the instruction
+    string, and inventing a hash of the empty string would make every bundle
+    disagree with every baseline about DRIFT-008.
+    """
+    servers: Dict[str, Any] = {}
+    live: Dict[str, Any] = {}
+    for entry in document.get("servers") or []:
+        if not isinstance(entry, dict):
+            continue
+        tools = [t for t in (entry.get("tools") or []) if isinstance(t, dict)
+                 and isinstance(t.get("name"), str)]
+        endpoint = entry.get("url_host") or entry.get("command_basename") or "?"
+        identity = "{}@{}:{}".format(entry.get("name"), entry.get("transport"), endpoint)
+        if identity in servers:
+            continue
+        record = OrderedDict(sorted(canonical.hash_server(tools).items()))
+        record.pop("instructions_hash", None)
+        record["transport"] = entry.get("transport")
+        record["auth_method"] = entry.get("auth_method")
+        record["server_version"] = entry.get("server_version")
+        record["version_pinned"] = entry.get("version_pinned")
+        record["tools"] = OrderedDict(
+            (t["name"], tool_record(t)) for t in sorted(tools, key=lambda t: t["name"]))
+        servers[identity] = record
+        live[identity] = {t["name"]: t for t in tools}
+    return OrderedDict(sorted(servers.items())), live
+
+
 def now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
