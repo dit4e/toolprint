@@ -1,4 +1,4 @@
-"""Drift classification. Fifteen rules, checked in order; the first match wins.
+"""Drift classification. Sixteen rules, checked in order; the first match wins.
 
 Rule ids are stable - exceptions reference them - so they are assigned in the
 order the rules were written, and the RULES list below is ordered by precedence.
@@ -17,11 +17,12 @@ exception without an expiry date does not exist: see baseline.py.
 
 from __future__ import annotations
 
+import collections
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from . import effects, lexical, surface
+from . import canonical, effects, lexical, surface
 from .findings.library import CRITICAL, HIGH, LOW, MEDIUM
 
 # Stable rule ids, in precedence order.
@@ -38,6 +39,7 @@ RULES = [
     ("DRIFT-011", MEDIUM, "Safety annotation added or relaxed"),
     ("DRIFT-009", LOW, "Additive schema change"),
     ("DRIFT-015", LOW, "Schema changed inside its parameters"),
+    ("DRIFT-016", LOW, "Description reformatted"),
     ("DRIFT-010", LOW, "Tool removed"),
     ("DRIFT-012", LOW, "Tool annotations changed"),
     ("DRIFT-013", LOW, "Server version changed"),
@@ -72,6 +74,11 @@ REMEDIATION = {
                  "inside a schema are text the model reads, the same as the tool's "
                  "own. The recorded shape cannot show which; compare the `check "
                  "--bundle` output from before and after.",
+    "DRIFT-016": "Only the layout of the description changed - line breaks and spacing. "
+                 "No word was added, removed or altered. Recorded so the baseline stays "
+                 "current, not because anything needs review. Non-ASCII spaces are not "
+                 "treated as layout, so an inserted non-breaking or zero-width character "
+                 "is still reported as a real change.",
     "DRIFT-010": "A tool disappeared from an approved server. Confirm it was retired "
                  "deliberately rather than failing to load.",
     "DRIFT-011": "A safety hint changed without being revoked - most often a tool "
@@ -147,6 +154,22 @@ def _annotation_delta(old: Dict[str, Any], new: Dict[str, Any]) -> Dict[str, Any
         (hints if key in HINT_KEYS else vendor).append(phrase)
 
     return {"hint_changes": hints, "vendor_changes": vendor, "partial_record": partial}
+
+
+def _sentence_edit(old: Dict[str, Any], new: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Which sentences a description lost and gained, as hashes.
+
+    None when either record predates sentence hashes. Baselines written before
+    this change hold only the byte-exact description hash, so for them the edit
+    cannot be named and nothing is grouped - they behave exactly as they did.
+    """
+    was, now = old.get("description_sentences"), new.get("description_sentences")
+    if not isinstance(was, list) or not isinstance(now, list):
+        return None
+    lost = collections.Counter(was) - collections.Counter(now)
+    gained = collections.Counter(now) - collections.Counter(was)
+    return {"sentences_removed": sorted(lost.elements()),
+            "sentences_added": sorted(gained.elements())}
 
 
 def _schema_delta(old: Dict[str, Any], new: Dict[str, Any]) -> Dict[str, List[str]]:
@@ -235,11 +258,23 @@ def _classify_tool(server: str, name: str, old: Dict[str, Any], new: Dict[str, A
                                 reference["references"], reference["owned_by"]),
                             references=reference["references"])
 
+    if (description_changed and not schema_changed
+            and old.get("description_text_hash")
+            and old.get("description_text_hash") == new.get("description_text_hash")):
+        # Checked after DRIFT-004 and DRIFT-005, so a hidden character or a
+        # cross-server reference arriving alongside a reformat is still reported
+        # as what it is.
+        return make("DRIFT-016", "line breaks or spacing changed; the wording did not")
+
     if description_changed and not schema_changed:
+        evidence = {"description_hash_was": old.get("description_hash", "")[:12],
+                    "description_hash_now": new.get("description_hash", "")[:12]}
+        edit = _sentence_edit(old, new)
+        if edit is not None:
+            evidence.update(edit)
         return make("DRIFT-003",
                     "the description or title changed while the schema did not",
-                    description_hash_was=old.get("description_hash", "")[:12],
-                    description_hash_now=new.get("description_hash", "")[:12])
+                    **evidence)
 
     if schema_changed:
         delta = _schema_delta(old, new)
@@ -273,6 +308,60 @@ def _classify_tool(server: str, name: str, old: Dict[str, Any], new: Dict[str, A
             return make("DRIFT-011", detail or "a safety hint changed", **delta)
         return make("DRIFT-012", detail or "annotations changed", **delta)
     return None
+
+
+def _group_identical_edits(changes: List[Change],
+                          live_tools: Dict[str, Dict[str, Any]]) -> List[Change]:
+    """One finding for one edit, however many tools it touched.
+
+    azure 3.0.0-beta.43 removed the same boilerplate sentence from 59 tool
+    descriptions and reflowed their layout. That arrived as 59 separate
+    DRIFT-003s - the rug-pull signature, ranked high - for a template tidy-up,
+    which is exactly the volume that gets a monitor switched off.
+
+    Grouping reduces the count and never the severity. An attacker adding the
+    same instruction to every tool would produce an identical edit too, and it
+    must not be downgraded for being done at scale. Only DRIFT-003s whose
+    removed and added sentences match exactly are merged, so a tool whose edit
+    differs even slightly - the 60th azure tool gained "record retrieval, and
+    version history" - keeps its own finding instead of disappearing into the
+    group. Excepted changes are never grouped.
+    """
+    buckets: Dict[Tuple[str, Tuple[str, ...], Tuple[str, ...]], List[Change]] = {}
+    keep: List[Change] = []
+    for change in changes:
+        removed = change.evidence.get("sentences_removed")
+        added = change.evidence.get("sentences_added")
+        if (change.rule != "DRIFT-003" or change.excepted or change.tool is None
+                or removed is None or added is None or not (removed or added)):
+            keep.append(change)
+            continue
+        key = (change.server, tuple(removed), tuple(added))
+        buckets.setdefault(key, []).append(change)
+
+    for (server, removed, added), members in sorted(buckets.items()):
+        if len(members) < 2:
+            keep.extend(members)
+            continue
+        tools = sorted(m.tool for m in members)
+        added_text: List[str] = []
+        for tool in tools:
+            texts = canonical.sentence_texts((live_tools.get(server) or {}).get(tool) or {})
+            added_text = [texts[h] for h in added if h in texts]
+            if len(added_text) == len(added):
+                break
+        detail = "the same edit was made to {} tools' descriptions while their schemas did " \
+                 "not change: {} sentence(s) removed, {} added".format(
+                     len(tools), len(removed), len(added))
+        if added_text:
+            detail += " - added: " + "; ".join(repr(t[:120]) for t in added_text[:3])
+        keep.append(Change(
+            "DRIFT-003", RULE_SEVERITY["DRIFT-003"], RULE_TITLE["DRIFT-003"], server, None,
+            detail,
+            {"tools": tools, "sentences_removed": list(removed),
+             "sentences_added": list(added), "added_text": added_text},
+            excepted=False))
+    return keep
 
 
 def compare(baseline_doc: Dict[str, Any], current: Dict[str, Any],
@@ -370,6 +459,8 @@ def compare(baseline_doc: Dict[str, Any], current: Dict[str, Any],
 
     for change in changes:
         change.excepted = is_excepted(exceptions, change.server, change.tool, change.rule)
+
+    changes = _group_identical_edits(changes, live_tools)
 
     order = {rid: index for index, (rid, _, _) in enumerate(RULES)}
     changes.sort(key=lambda c: (order.get(c.rule, 99), c.server, c.tool or ""))

@@ -102,7 +102,7 @@ toolprint check --connect --fail-on high
 toolprint approve --tool contact_delete --by "$USER" --note "expected in 4.2"
 ```
 
-Fifteen rules, most severe first: effect-class escalation and revoked safety
+Sixteen rules, most severe first: effect-class escalation and revoked safety
 annotations are `critical`; a description that changed while its schema did not
 is `high`, because that is the rug-pull signature — an attacker rewriting a
 tool's instructions has to leave the schema alone or the tool stops working.
@@ -110,7 +110,17 @@ Invisible characters and cross-server references appearing in text are `high`
 too, as are tools that vanish in the same release that adds a dispatch router —
 capability moving out of view rather than being retired. Breaking schema changes, new tools and safety hints that changed without
 being revoked are `medium`; additive changes, changes inside a parameter's description or
-constraints, removals, vendor annotations and version bumps are `low`.
+constraints, removals, vendor annotations, version bumps and descriptions
+whose layout changed but wording did not are `low`.
+
+**One edit is one finding.** When a release makes the identical wording change
+to many tools' descriptions — the same sentences removed and the same added —
+it is reported once, listing the tools. azure 3.0.0-beta.43 removed one
+boilerplate sentence from 59 tools, which had been 59 separate `high` findings.
+Grouping reduces the count and never the severity: the same malicious
+instruction added to every tool is also an identical edit, and it stays `high`.
+A tool whose edit differs in any way keeps its own finding, so the one real
+change in a template release is not buried by the rest.
 
 A revoked annotation means a guarantee was withdrawn — `readOnlyHint` going
 false, or `destructiveHint` going true. An annotation that merely *changed* is

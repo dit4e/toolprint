@@ -77,6 +77,7 @@ def tool_record(tool: Dict[str, Any]) -> Dict[str, Any]:
     record["annotations"] = (
         OrderedDict(sorted(annotations.items())) if isinstance(annotations, dict) else {})
     record["schema_shape"] = _schema_shape(tool.get("inputSchema"))
+    record.update(canonical.description_signature(tool))
     return record
 
 

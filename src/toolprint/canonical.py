@@ -238,6 +238,53 @@ def canonicalise(value: Any, resolve: bool = False) -> Tuple[Any, str]:
 # Component hashes
 # --------------------------------------------------------------------------
 
+# ASCII whitespace only. Python's `\s` also matches U+00A0 and the other Unicode
+# spaces, and treating those as ignorable would let a non-breaking or
+# ideographic space slide past as "reformatting". This module never
+# Unicode-normalises for the same reason: equivalence that erases a character a
+# reader cannot see is how a homoglyph attack gets approved.
+_LAYOUT = re.compile(r"[ \t\r\n\f\v]+")
+# A sentence ends at . ! or ? followed by a capital, quote or bracket, with or
+# without a space. Azure's template ran two sentences together ("file
+# systems.This tool is...") and later split them onto separate lines; requiring
+# the space would read that reformatting as a rewrite.
+_SENTENCE = re.compile(r"(?<=[.!?])[ \t\r\n\f\v]*(?=[A-Z\"'(\[])")
+
+
+def description_signature(tool: Dict[str, Any]) -> Dict[str, Any]:
+    """What a description says, independent of how it is laid out.
+
+    Kept separate from `hash_tool`, whose hashes are byte-exact on purpose and
+    are already recorded in every baseline in existence: changing them would
+    report every tool as drifted on upgrade.
+
+    - `description_text_hash`: the description and title with layout whitespace
+      removed. Equal across a change means only the layout moved.
+    - `description_sentences`: a short hash per sentence. Comparing two lists
+      shows which sentences were removed and added, so the same edit applied to
+      many tools can be recognised as one edit - without storing the text in a
+      baseline that is designed to hold hashes rather than a second copy of the
+      tool surface.
+    """
+    title = tool.get("title") if isinstance(tool.get("title"), str) else ""
+    description = tool.get("description") if isinstance(tool.get("description"), str) else ""
+    joined = _LAYOUT.sub(" ", "{}\n{}".format(title, description)).strip()
+    sentences = [part for part in _SENTENCE.split(joined) if part.strip()]
+    return {
+        "description_text_hash": sha256_of(_LAYOUT.sub("", joined)),
+        "description_sentences": [sha256_of(_LAYOUT.sub("", part))[:16] for part in sentences],
+    }
+
+
+def sentence_texts(tool: Dict[str, Any]) -> Dict[str, str]:
+    """{sentence hash: sentence}, for showing what an edit actually said."""
+    title = tool.get("title") if isinstance(tool.get("title"), str) else ""
+    description = tool.get("description") if isinstance(tool.get("description"), str) else ""
+    joined = _LAYOUT.sub(" ", "{}\n{}".format(title, description)).strip()
+    return {sha256_of(_LAYOUT.sub("", part))[:16]: part.strip()
+            for part in _SENTENCE.split(joined) if part.strip()}
+
+
 def hash_tool(tool: Dict[str, Any]) -> Dict[str, Any]:
     """Component hashes for one tool definition.
 

@@ -632,8 +632,12 @@ def cmd_approve(args: argparse.Namespace) -> int:
 
     for change in changes:
         target = "{}/{}".format(change.server, change.tool) if change.tool else change.server
+        grouped = change.evidence.get("tools") if change.tool is None else None
+        members = grouped or []
         if selectors and not any(
-                sel in (target, change.server, change.tool) for sel in selectors):
+                sel in (target, change.server, change.tool)
+                or sel in members or sel in ("{}/{}".format(change.server, m) for m in members)
+                for sel in selectors):
             skipped.append(target)
             continue
 
@@ -644,7 +648,21 @@ def cmd_approve(args: argparse.Namespace) -> int:
         stored = document.setdefault("servers", {}).setdefault(change.server, {})
         live = current.get(change.server) or {}
 
-        if change.tool is None:
+        if grouped:
+            # One finding for one edit made to many tools. Approving it has to
+            # re-record every tool it covers, or they stay stale and the same
+            # edit is reported again tomorrow.
+            tools = stored.setdefault("tools", {})
+            for name in grouped:
+                record = (live.get("tools") or {}).get(name)
+                if record is None:
+                    continue
+                record = dict(record)
+                record["approved_at"] = stamp
+                record["approved_by"] = args.by
+                record["note"] = args.note
+                tools[name] = record
+        elif change.tool is None:
             for key in ("instructions_hash", "toolset_hash", "transport", "auth_method",
                         "server_version", "version_pinned"):
                 if key in live:
