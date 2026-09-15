@@ -33,6 +33,7 @@ EFFECT = "effect"
 COST = "cost"
 HYGIENE = "hygiene"
 DRIFT = "drift"
+CAPABILITY = "capability"
 
 
 @dataclass(frozen=True)
@@ -75,6 +76,24 @@ DEFINITIONS: Dict[str, Definition] = {d.id: d for d in [
         "A headersHelper runs an arbitrary program in the credential path, "
         "and the resulting auth posture cannot be determined statically. "
         "Confirm what the command does and that its own inputs are protected.",
+    ),
+    Definition(
+        "CAP-001", CAPABILITY,
+        "Where the tool surface's real capability is defined",
+        "Enumerate package routers in a sandbox with toolprint-probe; for "
+        "environment-defined tools, observe the environment, not the package.",
+        "A tool's capability is not always in its definition, and where it lives "
+        "decides how to see it. Declared tools are fully in the tool list. "
+        "Package routers take an operation name and a free-form object and reach "
+        "operations that ship inside the package - not in the tool list, but "
+        "enumerable by calling their discovery mode in a sandbox (toolprint-probe). "
+        "Environment-defined tools reach operations set by something outside the "
+        "package - the open web page, or a credential's cluster permissions - so "
+        "no scan of the package can list them, and a clean drift result covers "
+        "only the router, never what it reaches. A fourth case is not counted "
+        "here because it cannot be seen from the surface at all: a tool whose "
+        "definition never changes while its behaviour does. Treat any count of "
+        "capability as a floor.",
     ),
     Definition(
         "EFFECT-001", EFFECT,

@@ -195,6 +195,43 @@ def _effect_findings(context: Optional[Context], by_server: Dict[str, Dict[str, 
                       "unresolved": tally[effects.UNKNOWN]},
         ))
 
+    # CAP-001: where the loaded surface's capability is defined, and how to see
+    # deeper. The counts route the reader to a method - package routers to
+    # toolprint-probe, environment-defined tools to observing the environment -
+    # rather than just noting, as HYG-007 does, that a router exists.
+    levels = {surface.LEVEL_DECLARED: 0, surface.LEVEL_PACKAGE: 0, surface.LEVEL_ENVIRONMENT: 0}
+    environment: List[Dict[str, str]] = []
+    sources: Dict[str, str] = {}
+    for server in sorted(context.servers, key=lambda s: s.key):
+        for tool in (server.tools or []):
+            if not isinstance(tool, dict) or not isinstance(tool.get("name"), str):
+                continue
+            levels[surface.capability_level(tool)] += 1
+            source = surface.environment_source(tool)
+            if source:
+                environment.append({"server": server.key, "tool": tool["name"]})
+                sources.setdefault(server.key, source)
+    hidden = levels[surface.LEVEL_PACKAGE] + levels[surface.LEVEL_ENVIRONMENT]
+    if hidden:
+        parts = []
+        if levels[surface.LEVEL_PACKAGE]:
+            parts.append("{} behind package routers (enumerate with toolprint-probe)".format(
+                levels[surface.LEVEL_PACKAGE]))
+        if levels[surface.LEVEL_ENVIRONMENT]:
+            parts.append("{} defined by their environment ({}), which no package scan "
+                         "can list".format(levels[surface.LEVEL_ENVIRONMENT],
+                                            "; ".join(sorted(set(sources.values())))))
+        found.append(_make(
+            "CAP-001", INFO,
+            "In {}: {} of {} tools have capability the definition does not show - {}.".format(
+                context.label, hidden, sum(levels.values()), "; ".join(parts)),
+            affected=environment,
+            evidence={"levels": {"declared": levels[surface.LEVEL_DECLARED],
+                                 "package_hidden": levels[surface.LEVEL_PACKAGE],
+                                 "environment_defined": levels[surface.LEVEL_ENVIRONMENT]},
+                      "environments": sources},
+        ))
+
     if unresolved:
         found.append(_make(
             "EFFECT-003", LOW,

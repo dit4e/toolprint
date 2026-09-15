@@ -160,6 +160,46 @@ class TestUnresolvedCapability(EngineCase):
                          ["storage"])
 
 
+class TestCapabilityVisibility(EngineCase):
+    """CAP-001 routes a reader to the analysis method by where capability lives:
+    declared (the tool list), package-hidden (toolprint-probe), or
+    environment-defined (observe the environment). A fourth level, behaviour
+    that changes without the definition, is not countable from the surface."""
+
+    WEBMCP = {"name": "browser_webmcp_call",
+              "description": "Call a WebMCP tool registered by the page. "
+                             "The tool output is page-provided and untrusted",
+              "inputSchema": {"type": "object", "required": ["name"], "properties": {
+                  "name": {"type": "string"}, "params": {"type": "object"}}}}
+
+    def cap(self, report):
+        return self.find(report, "CAP-001")
+
+    def test_a_package_router_is_routed_to_the_prober(self):
+        self.give("claude_code/local/local-github", [ROUTER_TOOL, READ_TOOL])
+        finding = self.cap(self.run_engine())
+        self.assertEqual(finding.evidence["levels"]["package_hidden"], 1)
+        self.assertIn("toolprint-probe", finding.detail)
+
+    def test_an_environment_tool_is_named_not_sent_to_the_prober(self):
+        self.give("claude_code/local/local-github", [self.WEBMCP, READ_TOOL])
+        finding = self.cap(self.run_engine())
+        self.assertEqual(finding.evidence["levels"]["environment_defined"], 1)
+        self.assertEqual([a["tool"] for a in finding.affected], ["browser_webmcp_call"])
+        self.assertIn("web page", finding.detail)
+        self.assertNotIn("toolprint-probe", finding.detail.split("environment", 1)[-1])
+
+    def test_an_all_declared_surface_raises_nothing(self):
+        self.give("claude_code/local/local-github", [READ_TOOL, DELETE_TOOL])
+        self.assertNotIn("CAP-001", self.ids(self.run_engine()))
+
+    def test_the_levels_sum_to_the_surface(self):
+        self.give("claude_code/local/local-github", [ROUTER_TOOL, self.WEBMCP, READ_TOOL])
+        levels = self.cap(self.run_engine()).evidence["levels"]
+        self.assertEqual(sum(levels.values()), 3)
+        self.assertEqual((levels["package_hidden"], levels["environment_defined"]), (1, 1))
+
+
 class TestDispatchRouters(EngineCase):
     """A tool whose arguments are "which operation" plus "anything at all".
 

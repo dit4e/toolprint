@@ -15,7 +15,7 @@ which a router deliberately keeps small.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 # Names that select an operation rather than describe one. Deliberately short.
 # "endpoint" was in an earlier draft and matched firecrawl_feedback, where it is
@@ -49,6 +49,61 @@ def is_freeform_object(schema: Any) -> bool:
     if isinstance(properties, dict) and properties:
         return False
     return not _constrains_values(schema)
+
+
+# Where a tool's real operations are defined, and therefore what it takes to see
+# them. Level 4 - behaviour that changes while the definition does not - is
+# deliberately not here: it is invisible from the surface by definition, so it
+# is a standing caveat, never a per-tool tag.
+LEVEL_DECLARED = 1        # the tool list is the surface; read it and you are done
+LEVEL_PACKAGE = 2         # a router whose operations ship inside the package
+LEVEL_ENVIRONMENT = 3     # operations defined by a runtime environment, not the package
+
+# Signals that a tool's operations come from a runtime environment outside the
+# package. A starter set, cited, extended the way the prober's catalogue is: by
+# adding a case with the evidence for it.
+_ENV_DESCRIPTION = re.compile(
+    r"registered by the page|page-provided|provided by the (?:page|site|website)", re.I)
+
+
+def environment_source(tool: Dict[str, Any]) -> Optional[str]:
+    """Name the runtime environment a tool's operations come from, or None.
+
+    A router that matches nothing here is treated as package-defined (level 2),
+    the conservative default: when it is unclear whether the operations ship
+    with the package, assume they do, because that is the case a package probe
+    can actually enumerate. Being wrong in this direction over-probes a level-3
+    tool once; being wrong the other way would silently drop a package router
+    from analysis.
+    """
+    if not isinstance(tool, dict):
+        return None
+    name = tool.get("name")
+    name = name.lower() if isinstance(name, str) else ""
+    description = tool.get("description")
+    description = description if isinstance(description, str) else ""
+    # @playwright/mcp 1.64.0-alpha browser_webmcp_call / browser_webmcp_list:
+    # tools registered at runtime by the open web page, across frames.
+    if "webmcp" in name or _ENV_DESCRIPTION.search(description):
+        return "the open web page (per page, changes as pages load)"
+    # mcp-server-kubernetes kubectl_generic: a command and args passed to
+    # kubectl, whose surface is the cluster's API and the credential's RBAC.
+    if name == "kubectl_generic":
+        return "the cluster's API and the credential's permissions"
+    return None
+
+
+def capability_level(tool: Dict[str, Any]) -> int:
+    """Where this tool's real operations are defined, from the surface alone.
+
+    Environment first: a WebMCP list tool is not itself a router, but its
+    capability is still the page's, so it must not be read as declared.
+    """
+    if environment_source(tool):
+        return LEVEL_ENVIRONMENT
+    if is_dispatch_router(tool):
+        return LEVEL_PACKAGE
+    return LEVEL_DECLARED
 
 
 def is_dispatch_router(tool: Dict[str, Any]) -> bool:
