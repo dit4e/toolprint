@@ -33,34 +33,41 @@ from typing import List, Optional, Sequence
 #
 # Both tools relocate their cache on request, and CI routinely does: a GitHub
 # runner with astral-sh/setup-uv exports UV_CACHE_DIR into a temp path, so a
-# hardcoded ~/.cache/uv finds nothing there - which is exactly what happened on
-# the first run, 36 servers with no cached copy found. Environment first,
-# conventional locations after.
+# hardcoded ~/.cache/uv finds nothing there.
+#
+# Each tool uses exactly ONE cache directory, chosen by precedence, and this
+# reads that one. It used to read the union of every candidate, which reports
+# versions the package manager would never run under the current settings: with
+# UV_CACHE_DIR set, a developer's old ~/.cache/uv copies were listed beside the
+# ones uv actually uses. Precedence verified against the tools themselves:
+#
+#   uv 0.12.10   UV_CACHE_DIR  >  $XDG_CACHE_HOME/uv  >  ~/.cache/uv
+#   npm 10.8     npm_config_cache  >  ~/.npm        (XDG_CACHE_HOME is ignored;
+#                an earlier version of this searched $XDG_CACHE_HOME/npm anyway)
 NPX_ROOTS = ("~/.npm/_npx",)
 UV_ROOTS = ("~/.cache/uv/archive-v0", "~/Library/Caches/uv/archive-v0")
 NPM_CACHE_VARS = ("npm_config_cache", "NPM_CONFIG_CACHE")
 UV_CACHE_VARS = ("UV_CACHE_DIR",)
 
 
-def _roots(configured: Sequence[str], env_vars: Sequence[str], suffix: str) -> List[Path]:
-    """Cache directories to search, environment-configured ones first."""
-    found: List[Path] = []
+def _roots(defaults: Sequence[str], env_vars: Sequence[str], suffix: str,
+           xdg_subdir: Optional[str] = None) -> List[Path]:
+    """The cache directory the package manager will actually use.
+
+    First match wins, in the tool's own order. Read from the environment only -
+    asking the tool (`uv cache dir`) would mean spawning it, and --no-connect
+    promises no subprocesses. Only when nothing is configured are the default
+    locations searched, and at most one of those exists on a given machine.
+    """
     for var in env_vars:
         value = os.environ.get(var)
         if value:
-            found.append(Path(os.path.expanduser(value)) / suffix)
+            return [Path(os.path.expanduser(value)) / suffix]
     xdg = os.environ.get("XDG_CACHE_HOME")
-    if xdg and suffix == "archive-v0":
-        found.append(Path(os.path.expanduser(xdg)) / "uv" / suffix)
-    if xdg and suffix == "_npx":
-        found.append(Path(os.path.expanduser(xdg)) / "npm" / suffix)
-    found.extend(Path(os.path.expanduser(p)) for p in configured)
-    seen, unique = set(), []
-    for path in found:
-        if str(path) not in seen:
-            seen.add(str(path))
-            unique.append(path)
-    return unique
+    if xdg and xdg_subdir:
+        return [Path(os.path.expanduser(xdg)) / xdg_subdir / suffix]
+    return [Path(os.path.expanduser(p)) for p in defaults]
+
 
 MAX_NPX_DIRS = 400          # a busy machine accumulates these; do not walk forever
 
@@ -131,7 +138,7 @@ def uv_versions(package: str) -> List[str]:
     """
     wanted = _normalise(package)
     found: List[str] = []
-    for base in _roots(UV_ROOTS, UV_CACHE_VARS, "archive-v0"):
+    for base in _roots(UV_ROOTS, UV_CACHE_VARS, "archive-v0", xdg_subdir="uv"):
         if not base.is_dir():
             continue
         try:

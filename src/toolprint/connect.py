@@ -21,7 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from . import protocol, tokens
+from . import protocol, tokens, installed
 from .context import Context
 from .model import Server
 
@@ -111,6 +111,18 @@ def execute(
             progress(server)
         protocol.fetch(server, timeout=timeout, cwd=server.project_root,
                        startup_timeout=startup_timeout)
+        # Read the package cache again now that the server has run. Discovery
+        # reads it before anything starts, and on a fresh CI runner the package
+        # is not there yet: astral-sh/setup-uv prunes unpacked wheels out of the
+        # cache it restores, so every uvx server on the public collector came back
+        # with no installed version - including the four reporting their SDK's
+        # version 1.30.0 while actually running 2026.8.18, which is precisely the
+        # mismatch this exists to catch. After a run the cache holds the copy
+        # that ran. Kept only if it finds something, so a server whose cache is
+        # somewhere this cannot see keeps what discovery found.
+        after = installed.versions_on_disk(server.command, server.args)
+        if after:
+            server.installed_versions = after
         if server.tools:
             per_tool, total, method = tokens.count_tools(server.tools)
             server.tool_tokens = per_tool
@@ -133,6 +145,11 @@ def execute(
             entry.tool_tokens = source.tool_tokens
             entry.token_total = source.token_total
             entry.token_method = source.token_method
+            # These were not copied, so a server defined in two scopes kept its
+            # version only on the entry that happened to be fetched.
+            entry.server_name = source.server_name
+            entry.server_version = source.server_version
+            entry.installed_versions = source.installed_versions
 
 
 def context_cost(context: Context) -> Tuple[int, int, Optional[str]]:
